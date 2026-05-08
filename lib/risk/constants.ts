@@ -1,0 +1,13 @@
+export const DEFAULT_MAX_RISK_PCT = 0.01
+export const HARD_MAX_RISK_PCT = 0.02
+export const MIN_RAW_EDGE = 0.03
+export const MIN_PERCENTAGE_EDGE = 6
+export const MAX_ACCEPTABLE_SPREAD = 0.04
+export const MIN_LIQUIDITY_QUALITY = 0.4
+export const MIN_CONFIDENCE_SCORE = 70
+export const MIN_TIME_REMAINING_MINUTES = 10
+export const MIN_EDGE_TO_SPREAD_RATIO = 1.5
+export const HIGH_CONFIDENCE_OVERSIZE_THRESHOLD = 88
+export const MIN_EDGE_QUALITY_FOR_OVERSIZE = 0.8
+export const EXTREME_REALIZED_VOLATILITY = 1.25
+export const EPSILON = 1e-9
