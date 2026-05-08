@@ -13,7 +13,10 @@ export interface TradeOpportunityInput {
   realizedVolatility: number
   volatilityRegime: RiskVolatilityRegime
   bankroll: number
+  /** Dollar notional (or premium) at risk for the contemplated size — not the contract price alone. */
   proposedPositionSize: number
+  /** Model-level warnings from `estimateProbabilityAboveStrike` (tails, horizon, vol stress). */
+  probabilityWarnings?: string[] | null
   distanceFromStrikePct?: number | null
   timeRemainingMinutes?: number | null
   maxRiskPct?: number | null
@@ -50,6 +53,8 @@ export interface TradeDecisionChecks {
   positionSizeOk: boolean
   riskRewardOk: boolean
   timeOk: boolean
+  probabilityWarningsOk: boolean
+  coinFlipOk: boolean
 }
 
 export interface TradeEvaluation {

@@ -162,14 +162,17 @@ function analyzeSingleMarket({
     impliedProbabilityYesAsk,
   )
 
-  const rawEdgeYes =
+  const yesEdgeCalc =
     fairProbabilityAbove !== null && impliedProbabilityYesAsk !== null
-      ? calculateEdge(fairProbabilityAbove, impliedProbabilityYesAsk).rawEdge
+      ? calculateEdge(fairProbabilityAbove, impliedProbabilityYesAsk)
       : null
-  const rawEdgeNo =
+  const noEdgeCalc =
     fairProbabilityBelow !== null && impliedProbabilityNoAsk !== null
-      ? calculateEdge(fairProbabilityBelow, impliedProbabilityNoAsk).rawEdge
+      ? calculateEdge(fairProbabilityBelow, impliedProbabilityNoAsk)
       : null
+
+  const rawEdgeYes = yesEdgeCalc?.rawEdge ?? null
+  const rawEdgeNo = noEdgeCalc?.rawEdge ?? null
 
   const suggestedSide =
     (rawEdgeYes ?? Number.NEGATIVE_INFINITY) >=
@@ -179,6 +182,9 @@ function analyzeSingleMarket({
   const actionPrice =
     suggestedSide === "YES" ? impliedProbabilityYesAsk : impliedProbabilityNoAsk
   const rawEdge = suggestedSide === "YES" ? rawEdgeYes : rawEdgeNo
+  const activeEdgeCalc = suggestedSide === "YES" ? yesEdgeCalc : noEdgeCalc
+  const modelProbabilityForFirewall =
+    suggestedSide === "YES" ? fairProbabilityAbove : fairProbabilityBelow
   const spreadAdjustedEdge =
     rawEdge === null ? null : rawEdge - (bidAskSpread ?? 0) / 2
 
@@ -214,11 +220,15 @@ function analyzeSingleMarket({
     suggestedSide,
     actionPrice,
     rawEdge,
+    modelProbability: modelProbabilityForFirewall,
+    percentageEdge: activeEdgeCalc?.percentageEdge ?? null,
     bidAskSpread,
     liquidityScore,
     confidenceScore,
     minutesToSettlement,
     volatility,
+    probabilityWarnings: probabilityEstimate?.warnings ?? null,
+    distanceFromStrikePct: distanceToStrikePct,
   })
 
   const warnings = uniqueStrings([
@@ -237,6 +247,7 @@ function analyzeSingleMarket({
     distanceToStrikeDollars,
     distanceToStrikePct,
     minutesToSettlement,
+    probabilityWarnings: probabilityEstimate?.warnings ?? null,
     fairProbabilityAbove,
     fairProbabilityBelow,
     impliedProbabilityYesBid,

@@ -8,12 +8,17 @@ import {
   VolatilitySnapshot,
 } from "@/types"
 import {
+  ALL_IN_BANKROLL_FRACTION,
+  COINFLIP_IMPLIED_DISTANCE_FROM_FIFTY,
+  COINFLIP_MAX_ABS_RAW_EDGE,
+  COINFLIP_MODEL_DISTANCE_FROM_FIFTY,
   DEFAULT_MAX_RISK_PCT,
   EPSILON,
   EXTREME_REALIZED_VOLATILITY,
   HARD_MAX_RISK_PCT,
   HIGH_CONFIDENCE_OVERSIZE_THRESHOLD,
   MAX_ACCEPTABLE_SPREAD,
+  MAX_PROBABILITY_WARNINGS_FOR_TRADE,
   MIN_CONFIDENCE_SCORE,
   MIN_EDGE_QUALITY_FOR_OVERSIZE,
   MIN_EDGE_TO_SPREAD_RATIO,
@@ -25,6 +30,7 @@ import {
 import {
   BankrollSizingDecision,
   RiskVolatilityRegime,
+  TradeDecisionChecks,
   TradeEvaluation,
   TradeOpportunityInput,
   TradeRecommendation,
@@ -36,11 +42,18 @@ interface FirewallInput {
   suggestedSide: SuggestedSide
   actionPrice: number | null
   rawEdge: number | null
+  /** Fair probability for the traded side (YES = above strike, NO = below). */
+  modelProbability: number | null
+  /** `calculateEdge` percentage edge for the traded side, if known. */
+  percentageEdge: number | null
   bidAskSpread: number | null
   liquidityScore: number
   confidenceScore: number
   minutesToSettlement: number | null
   volatility: VolatilitySnapshot
+  probabilityWarnings?: string[] | null
+  /** Spot vs strike percent distance for confidence scoring (signed ok). */
+  distanceFromStrikePct?: number | null
 }
 
 type NormalizedTradeOpportunity = Omit<
@@ -50,12 +63,36 @@ type NormalizedTradeOpportunity = Omit<
   | "maxRiskPct"
   | "precomputedConfidenceScore"
   | "volatilityRegime"
+  | "probabilityWarnings"
 > & {
   distanceFromStrikePct: number | null
   timeRemainingMinutes: number | null
   maxRiskPct: number | null
   precomputedConfidenceScore: number | null
   volatilityRegime: VolatilityRegime
+  probabilityWarnings: string[]
+}
+
+function allChecksPass(checks: TradeDecisionChecks) {
+  return Object.values(checks).every(Boolean)
+}
+
+function isCoinFlipSetup(modelProbability: number, impliedProbability: number, rawEdge: number) {
+  const nearFifty =
+    Math.abs(modelProbability - 0.5) <= COINFLIP_MODEL_DISTANCE_FROM_FIFTY &&
+    Math.abs(impliedProbability - 0.5) <= COINFLIP_IMPLIED_DISTANCE_FROM_FIFTY
+  const weakEdge = Math.abs(rawEdge) <= COINFLIP_MAX_ABS_RAW_EDGE
+  return nearFifty && weakEdge
+}
+
+function normalizeWarningList(value: string[] | null | undefined) {
+  if (!value || !Array.isArray(value)) {
+    return []
+  }
+
+  return value
+    .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+    .filter((entry) => entry.length > 0)
 }
 
 export function clampRiskPct(value: number | null | undefined) {
@@ -102,7 +139,8 @@ export function computeBankrollSizing(input: {
     withinConfiguredRisk: proposedPositionSize <= configuredMaxRiskDollars + EPSILON,
     withinHardCap: proposedPositionSize <= hardCapRiskDollars + EPSILON,
     isOversized: proposedPositionSize > recommendedMaxRiskDollars + EPSILON,
-    isAllIn: bankroll > 0 && proposedPositionSize >= bankroll * 0.5,
+    isAllIn:
+      bankroll > 0 && proposedPositionSize >= bankroll * ALL_IN_BANKROLL_FRACTION - EPSILON,
   }
 }
 
@@ -156,6 +194,15 @@ export function evaluateTradeOpportunity(input: TradeOpportunityInput): TradeEva
   const timeQuality = scoreTimeQuality(normalized.timeRemainingMinutes)
   const riskRewardRatio = normalized.rawEdge / Math.max(normalized.bidAskSpread, 0.005)
 
+  const probabilityWarningCount = normalized.probabilityWarnings.length
+  const probabilityWarningsOk =
+    probabilityWarningCount <= MAX_PROBABILITY_WARNINGS_FOR_TRADE
+  const coinFlipOk = !isCoinFlipSetup(
+    normalized.modelProbability,
+    normalized.impliedProbability,
+    normalized.rawEdge,
+  )
+
   const confidenceScore = computeConfidenceScore({
     ...normalized,
     edgeQuality,
@@ -164,10 +211,9 @@ export function evaluateTradeOpportunity(input: TradeOpportunityInput): TradeEva
     volatilityQuality,
     distanceQuality,
     timeQuality,
+    probabilityWarnings: normalized.probabilityWarnings,
   })
 
-  // Oversize entries are only allowed when a caller explicitly raises the cap
-  // and the setup is unusually strong. Weak trades should resolve to NO_TRADE.
   const canAllowConfiguredOversize =
     sizing.withinConfiguredRisk &&
     sizing.withinHardCap &&
@@ -177,9 +223,9 @@ export function evaluateTradeOpportunity(input: TradeOpportunityInput): TradeEva
     normalized.volatilityRegime !== "elevated" &&
     normalized.volatilityRegime !== "extreme"
 
-  // A trade must clear every rule. Borderline setups should fail closed.
-  const checks = {
+  const checks: TradeDecisionChecks = {
     edgeOk:
+      normalized.impliedProbability > EPSILON &&
       normalized.rawEdge >= MIN_RAW_EDGE &&
       normalized.percentageEdge >= MIN_PERCENTAGE_EDGE,
     spreadOk: normalized.bidAskSpread <= MAX_ACCEPTABLE_SPREAD,
@@ -189,12 +235,15 @@ export function evaluateTradeOpportunity(input: TradeOpportunityInput): TradeEva
       normalized.realizedVolatility < EXTREME_REALIZED_VOLATILITY,
     confidenceOk: confidenceScore >= MIN_CONFIDENCE_SCORE,
     positionSizeOk:
-      (sizing.withinRecommendedRisk || canAllowConfiguredOversize) &&
-      !sizing.isAllIn,
+      sizing.withinHardCap &&
+      !sizing.isAllIn &&
+      (sizing.withinRecommendedRisk || canAllowConfiguredOversize),
     riskRewardOk: riskRewardRatio >= MIN_EDGE_TO_SPREAD_RATIO,
     timeOk:
       normalized.timeRemainingMinutes === null ||
       normalized.timeRemainingMinutes >= MIN_TIME_REMAINING_MINUTES,
+    probabilityWarningsOk,
+    coinFlipOk,
   }
 
   const rejectionReasons = buildRejectionReasons({
@@ -204,19 +253,19 @@ export function evaluateTradeOpportunity(input: TradeOpportunityInput): TradeEva
     sizing,
     liquidityQuality,
     riskRewardRatio,
+    probabilityWarningCount,
   })
 
-  const recommendation: TradeRecommendation =
-    Object.values(checks).every(Boolean)
-      ? side === "YES"
-        ? "BUY_YES"
-        : "BUY_NO"
-      : "NO_TRADE"
+  const recommendation: TradeRecommendation = allChecksPass(checks)
+    ? side === "YES"
+      ? "BUY_YES"
+      : "BUY_NO"
+    : "NO_TRADE"
 
   const reasons =
     recommendation === "NO_TRADE"
       ? [
-          "Defaulted to NO_TRADE because the setup did not clear every risk filter.",
+          "Capital preservation default: NO_TRADE until every risk gate passes.",
           ...rejectionReasons,
         ]
       : buildApprovalReasons({
@@ -234,6 +283,8 @@ export function evaluateTradeOpportunity(input: TradeOpportunityInput): TradeEva
     confidenceScore,
     sizing,
     riskRewardRatio,
+    liquidityQuality,
+    probabilityWarningCount,
   })
 
   return {
@@ -252,27 +303,70 @@ export function applyRiskFirewall(input: FirewallInput): {
   warnings: string[]
   sizing: PositionSizing
 } {
-  const marketPrice = input.actionPrice ?? 0
-  const modelProbability = clamp(marketPrice + (input.rawEdge ?? 0), 0, 1)
+  const sizing = computePositionSizing(
+    input.bankroll,
+    input.maxRiskPct,
+    input.actionPrice,
+  )
+
+  if (input.actionPrice === null || input.actionPrice <= 0 || !Number.isFinite(input.actionPrice)) {
+    return {
+      recommendation: "NO TRADE",
+      ruleChecks: {
+        positiveEdge: false,
+        spreadOk: false,
+        liquidityOk: false,
+        volatilityOk: false,
+        bankrollOk: false,
+        confidenceOk: false,
+        timeOk: false,
+        modelSetupOk: false,
+      },
+      warnings: uniqueStrings([
+        "Missing or invalid executable price; cannot size or clear the risk firewall.",
+      ]),
+      sizing,
+    }
+  }
+
+  const marketPrice = clamp(input.actionPrice, 0, 1)
+  const spread = clamp(input.bidAskSpread ?? 0, 0, 1)
+  const impliedProbability = marketPrice
+
+  const modelFallback = clamp(marketPrice + (input.rawEdge ?? 0), 0, 1)
+  const modelProbability =
+    input.modelProbability !== null && input.modelProbability !== undefined
+      ? clamp(input.modelProbability, 0, 1)
+      : modelFallback
+
+  const suppliedPct = input.percentageEdge
   const percentageEdge =
-    marketPrice > 0 ? (Math.abs(input.rawEdge ?? 0) / marketPrice) * 100 : 0
+    suppliedPct !== null && suppliedPct !== undefined && Number.isFinite(suppliedPct)
+      ? Math.abs(suppliedPct) > 1
+        ? Math.abs(suppliedPct)
+        : Math.abs(suppliedPct) * 100
+      : impliedProbability > 0
+        ? (Math.abs(input.rawEdge ?? 0) / impliedProbability) * 100
+        : 0
+
   const evaluation = evaluateTradeOpportunity({
     modelProbability,
-    impliedProbability: marketPrice,
+    impliedProbability,
     rawEdge: input.rawEdge ?? 0,
     percentageEdge,
-    bidAskSpread: input.bidAskSpread ?? 1,
+    bidAskSpread: spread > 0 ? spread : 0.02,
     liquidity: input.liquidityScore,
     realizedVolatility: input.volatility.rv30 ?? input.volatility.modelVol,
     volatilityRegime: input.volatility.regime,
     bankroll: input.bankroll,
-    proposedPositionSize: marketPrice,
+    proposedPositionSize: sizing.estimatedCost,
+    probabilityWarnings: input.probabilityWarnings ?? null,
+    distanceFromStrikePct: input.distanceFromStrikePct ?? null,
     timeRemainingMinutes: input.minutesToSettlement,
     maxRiskPct: input.maxRiskPct,
     preferredSide: input.suggestedSide,
     precomputedConfidenceScore: input.confidenceScore,
   })
-  const sizing = computePositionSizing(input.bankroll, input.maxRiskPct, input.actionPrice)
 
   const ruleChecks: RuleChecks = {
     positiveEdge: evaluation.checks.edgeOk,
@@ -282,14 +376,19 @@ export function applyRiskFirewall(input: FirewallInput): {
     bankrollOk: evaluation.checks.positionSizeOk && sizing.safeToTrade,
     confidenceOk: evaluation.checks.confidenceOk,
     timeOk: evaluation.checks.timeOk,
+    modelSetupOk:
+      evaluation.checks.probabilityWarningsOk && evaluation.checks.coinFlipOk,
   }
+
   const warnings = uniqueStrings([
     ...evaluation.warnings,
-    input.volatility.fatTailWarning ? "elevated volatility" : null,
+    input.volatility.fatTailWarning
+      ? "Fat-tail volatility snapshot: tail outcomes are harder to price than the mid."
+      : null,
   ])
 
   const recommendation = toLegacyRecommendation(
-    ruleChecks.bankrollOk ? evaluation.recommendation : "NO_TRADE",
+    sizing.safeToTrade ? evaluation.recommendation : "NO_TRADE",
   )
 
   return {
@@ -308,6 +407,7 @@ export function computeConfidenceScore(
     volatilityQuality?: number
     distanceQuality?: number
     timeQuality?: number
+    probabilityWarnings?: string[] | null
   },
 ) {
   const normalized = normalizeTradeOpportunity(input)
@@ -355,7 +455,14 @@ export function computeConfidenceScore(
     confidence *= 0.82
   }
 
+  const warningCount = normalized.probabilityWarnings.length
+  if (warningCount > 0) {
+    confidence *= 1 - Math.min(0.3, warningCount * 0.065)
+  }
+
   let score = Math.round(clamp(confidence * 100, 0, 100))
+  const warningDemerit = Math.min(warningCount * 7, 36)
+  score = Math.max(0, score - warningDemerit)
   if (normalized.precomputedConfidenceScore !== null) {
     score = Math.min(score, normalized.precomputedConfidenceScore)
   }
@@ -382,6 +489,7 @@ function normalizeTradeOpportunity(
     volatilityRegime: normalizeVolatilityRegime(input.volatilityRegime),
     bankroll: normalizePositiveNumber(input.bankroll),
     proposedPositionSize: normalizePositiveNumber(input.proposedPositionSize),
+    probabilityWarnings: normalizeWarningList(input.probabilityWarnings),
     distanceFromStrikePct: normalizeOptionalNumber(input.distanceFromStrikePct),
     timeRemainingMinutes: normalizeOptionalNumber(input.timeRemainingMinutes),
     maxRiskPct: input.maxRiskPct ?? null,
@@ -463,24 +571,43 @@ function buildBehavioralWarnings(input: {
   volatilityRegime: VolatilityRegime
   confidenceScore: number
   sizing: BankrollSizingDecision
-  checks: { edgeOk: boolean; liquidityOk: boolean; riskRewardOk: boolean }
+  checks: TradeDecisionChecks
   riskRewardRatio: number
+  liquidityQuality: number
+  probabilityWarningCount: number
 }) {
-  const warnings = [
-    input.sizing.isOversized ? "oversized exposure" : null,
-    !input.checks.liquidityOk ? "low-liquidity contract" : null,
+  const warnings: Array<string | null> = [
+    input.sizing.isAllIn
+      ? "All-in sizing risk: contemplated notional is an outsized fraction of bankroll."
+      : null,
+    input.sizing.isOversized
+      ? "Oversized position: notional exceeds the default 1% bankroll risk budget."
+      : null,
+    input.confidenceScore < MIN_CONFIDENCE_SCORE
+      ? "Low-confidence setup: score sits below the live-trading bar."
+      : null,
     input.volatilityRegime === "elevated" || input.volatilityRegime === "extreme"
-      ? "elevated volatility"
+      ? "Elevated volatility: outcomes are noisier; capital preservation bias strengthens."
       : null,
-    !input.checks.edgeOk ? "insufficient edge" : null,
+    !input.checks.edgeOk
+      ? "Insufficient edge: quotes do not clear structural minimums after friction."
+      : null,
+    !input.checks.liquidityOk || input.liquidityQuality < MIN_LIQUIDITY_QUALITY
+      ? "Poor liquidity: slippage and partial fills can erase paper edge."
+      : null,
     !input.checks.riskRewardOk || input.rawEdge <= input.bidAskSpread
-      ? "poor risk/reward"
+      ? "Poor risk/reward: spread consumes too much of the modeled edge."
       : null,
-    input.sizing.isOversized && (input.confidenceScore < MIN_CONFIDENCE_SCORE || !input.checks.edgeOk)
-      ? "revenge trade risk"
+    input.sizing.isOversized &&
+      (input.confidenceScore < MIN_CONFIDENCE_SCORE || !input.checks.edgeOk)
+      ? "Revenge-trade risk: size pressure on a mediocre or blocked setup."
       : null,
-    input.sizing.isAllIn ? "oversized exposure" : null,
-    input.riskRewardRatio < 1 ? "poor risk/reward" : null,
+    input.probabilityWarningCount > MAX_PROBABILITY_WARNINGS_FOR_TRADE
+      ? "Model stress stack: too many probability warnings for a live-sized entry."
+      : null,
+    !input.checks.coinFlipOk
+      ? "Coinflip-like distribution: market and model hover near parity with thin edge."
+      : null,
   ]
 
   return uniqueStrings(warnings)
@@ -496,16 +623,8 @@ function buildRejectionReasons(input: {
   liquidityQuality: number
   riskRewardRatio: number
   sizing: BankrollSizingDecision
-  checks: {
-    edgeOk: boolean
-    spreadOk: boolean
-    liquidityOk: boolean
-    volatilityOk: boolean
-    confidenceOk: boolean
-    positionSizeOk: boolean
-    riskRewardOk: boolean
-    timeOk: boolean
-  }
+  probabilityWarningCount: number
+  checks: TradeDecisionChecks
 }) {
   const reasons: string[] = []
 
@@ -536,7 +655,7 @@ function buildRejectionReasons(input: {
   }
   if (!input.checks.positionSizeOk) {
     reasons.push(
-      `Proposed size of ${formatDollars(input.sizing.proposedPositionSize)} exceeds the recommended risk budget of ${formatDollars(input.sizing.recommendedMaxRiskDollars)}.`,
+      `Proposed notional of ${formatDollars(input.sizing.proposedPositionSize)} fails bankroll concentration or hard-cap checks versus a recommended budget of ${formatDollars(input.sizing.recommendedMaxRiskDollars)}.`,
     )
   }
   if (!input.checks.riskRewardOk) {
@@ -547,6 +666,16 @@ function buildRejectionReasons(input: {
   if (!input.checks.timeOk) {
     reasons.push(
       `Only ${Math.max(input.timeRemainingMinutes ?? 0, 0).toFixed(0)} minutes remain, leaving too little buffer for a fresh entry.`,
+    )
+  }
+  if (!input.checks.probabilityWarningsOk) {
+    reasons.push(
+      `Probability engine emitted ${input.probabilityWarningCount} warnings (limit ${MAX_PROBABILITY_WARNINGS_FOR_TRADE}); model uncertainty is elevated.`,
+    )
+  }
+  if (!input.checks.coinFlipOk) {
+    reasons.push(
+      "Setup resembles a fair coinflip: model and market hover near parity with minimal exploitable edge.",
     )
   }
 
@@ -565,9 +694,9 @@ function buildApprovalReasons(input: {
     `${
       input.side === "YES" ? "YES" : "NO"
     } side carries ${formatPoints(input.rawEdge)} of directional edge with a ${input.percentageEdge.toFixed(1)}% percentage edge.`,
-    `Confidence scored ${input.confidenceScore}/100 after edge, spread, liquidity, volatility, strike-distance, and time checks.`,
-    `Proposed size of ${formatDollars(input.sizing.proposedPositionSize)} stays within the recommended risk budget of ${formatDollars(input.sizing.recommendedMaxRiskDollars)}.`,
-    `Volatility regime is ${input.volatilityRegime} and the setup cleared the no-trade filters.`,
+    `Confidence scored ${input.confidenceScore}/100 after edge, spread, liquidity, volatility, strike-distance, time, and model-warning inputs.`,
+    `Contemplated notional of ${formatDollars(input.sizing.proposedPositionSize)} stays inside the configured bankroll risk rails (${formatDollars(input.sizing.recommendedMaxRiskDollars)} recommended budget).`,
+    `Volatility regime is ${input.volatilityRegime} and every automated gate passed, yet this remains probabilistic analysis—not a profit guarantee.`,
   ]
 }
 
