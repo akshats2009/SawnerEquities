@@ -143,6 +143,7 @@ function analyzeSingleMarket({
           minutesToSettlement,
           volatility.modelVol,
           DEFAULT_MODEL_TYPE,
+          { largestRecentMove1m: volatility.largestAbsMove1m },
         )
 
   const fairProbabilityAbove = probabilityEstimate?.probabilityAbove ?? null
@@ -237,6 +238,7 @@ function analyzeSingleMarket({
     distanceToStrikeDollars,
     distanceToStrikePct,
     minutesToSettlement,
+    probabilityWarnings: probabilityEstimate?.warnings ?? null,
     fairProbabilityAbove,
     fairProbabilityBelow,
     impliedProbabilityYesBid,

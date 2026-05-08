@@ -2,6 +2,12 @@ export type CandleInterval = "1m" | "5m" | "15m" | "1h"
 export type MarketDataSource = "kalshi" | "coinbase"
 export type VolatilityRegime = "low" | "normal" | "elevated" | "extreme"
 export type ProbabilityModelType = "normal" | "lognormal"
+
+/** Optional context for probability warnings (does not change core formulas). */
+export interface ProbabilityModelContext {
+  /** Largest recent |ΔS/S| between consecutive closes, e.g. from 1m candles. */
+  largestRecentMove1m?: number | null
+}
 export type ConfidenceLabel = "low" | "moderate" | "high" | "very high"
 export type SuggestedSide = "YES" | "NO"
 export type Recommendation = "BUY YES" | "BUY NO" | "NO TRADE"
@@ -117,6 +123,8 @@ export interface ProbabilityEstimate {
   zScore: number
   expectedMove: ExpectedMoveEstimate
   confidenceLabel: ConfidenceLabel
+  /** Model-level cautions (fat tails, vol regime, horizon); not trade recommendations. */
+  warnings: string[]
 }
 
 export interface EdgeCalculation {
@@ -154,6 +162,8 @@ export interface MarketAnalysis {
   distanceToStrikeDollars: number | null
   distanceToStrikePct: number | null
   minutesToSettlement: number | null
+  /** Warnings from the diffusion probability model (vol, horizon, tails). */
+  probabilityWarnings: string[] | null
   fairProbabilityAbove: number | null
   fairProbabilityBelow: number | null
   impliedProbabilityYesBid: number | null

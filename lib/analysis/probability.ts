@@ -4,21 +4,36 @@ import {
   EdgeCalculation,
   ExpectedMoveEstimate,
   ProbabilityEstimate,
+  ProbabilityModelContext,
   ProbabilityModelType,
   VolatilityRegime,
   VolatilityWarningFlags,
 } from "@/types"
 
+/** Minutes in a calendar year (annualization clock for σ). */
 const MINUTES_PER_YEAR = 365 * 24 * 60
+
+/** Annualized realized-vol thresholds for regime labels (σ as decimal, e.g. 0.8 = 80%). */
 const LOW_REALIZED_VOL_THRESHOLD = 0.35
 const ELEVATED_REALIZED_VOL_THRESHOLD = 0.8
 const EXTREME_REALIZED_VOL_THRESHOLD = 1.2
+
+/** Recent single-bar move thresholds (fraction of spot, e.g. 0.006 = 0.6%). */
 const LOW_RECENT_MOVE_THRESHOLD = 0.0025
 const ELEVATED_RECENT_MOVE_THRESHOLD = 0.006
 const EXTREME_RECENT_MOVE_THRESHOLD = 0.009
 const FAT_TAIL_RECENT_MOVE_THRESHOLD = 0.008
-const MAX_DETERMINISTIC_Z_SCORE = 8
 
+const MAX_DETERMINISTIC_Z_SCORE = 8
+const SHORT_HORIZON_MINUTES = 20
+const DEEP_TAIL_ABS_Z = 2.5
+
+/**
+ * One-sigma expected absolute move over the horizon, in dollars and as a percent of spot.
+ *
+ * Uses the standard diffusion scaling: move fraction = σ × √(T) with T in years.
+ * Here σ is annualized realized volatility (same units as equity vol: 0.65 ≈ 65% per year).
+ */
 export function calculateExpectedMove(
   spotPrice: number,
   realizedVolatility: number,
@@ -33,22 +48,42 @@ export function calculateExpectedMove(
 
   return {
     expectedMoveDollars: spotPrice * expectedMoveFraction,
-    // Returned as a percentage, not a decimal fraction. Example: 0.75 means 0.75%.
+    // Percent of spot (e.g. 1.2 means 1.2%), not a [0,1] probability.
     expectedMovePercent: expectedMoveFraction * 100,
   }
 }
 
+/**
+ * Risk-neutral style estimate of P(S_T > K) at horizon T using recent σ, with no drift term.
+ *
+ * **Normal (arithmetic) heuristic:** treat terminal uncertainty as Gaussian with
+ * std dev ≈ spot × σ√T in price space, so z = (K − S) / (S σ√T) and
+ * P(S_T > K) ≈ 1 − Φ(z). This is a rough Bachelier-style scale, not a calibrated futures model.
+ *
+ * **Lognormal heuristic:** scale uncertainty on log-price: σ√T is the std dev of ln(S_T/S)
+ * in the small‑T approximation; we use z = ln(K/S) / (σ√T) and P ≈ 1 − Φ(z).
+ * Full GBM includes a −½σ²T drift in log space; omitting it keeps the function simple and
+ * is acceptable for short horizons relative to σ²T.
+ */
 export function estimateProbabilityAboveStrike(
   spotPrice: number,
   strikePrice: number,
   minutesToExpiry: number,
   realizedVolatility: number,
   modelType: ProbabilityModelType,
+  context?: ProbabilityModelContext,
 ): ProbabilityEstimate {
   assertPositiveNumber(spotPrice, "spotPrice")
   assertPositiveNumber(strikePrice, "strikePrice")
   assertNonNegativeNumber(minutesToExpiry, "minutesToExpiry")
   assertNonNegativeNumber(realizedVolatility, "realizedVolatility")
+
+  const rawLargestMove = context?.largestRecentMove1m
+  if (rawLargestMove !== null && rawLargestMove !== undefined) {
+    assertNonNegativeNumber(rawLargestMove, "largestRecentMove1m")
+  }
+  const moveForWarnings =
+    rawLargestMove != null && Number.isFinite(rawLargestMove) ? rawLargestMove : 0
 
   const expectedMove = calculateExpectedMove(
     spotPrice,
@@ -71,10 +106,19 @@ export function estimateProbabilityAboveStrike(
       zScore,
       expectedMove,
       confidenceLabel: classifyConfidenceLabel(Math.abs(zScore)),
+      warnings: buildProbabilityWarnings({
+        realizedVolatility,
+        minutesToExpiry,
+        modelType,
+        zScore,
+        largestRecentMove1m: moveForWarnings,
+        degenerate: true,
+      }),
     }
   }
 
-  // Normal model assumes arithmetic price moves. Lognormal uses log-price diffusion.
+  // z measures how many "expected move" units the strike sits above the spot (normal: in $;
+  // lognormal: in log-moneyness / σ√T).
   const zScore =
     modelType === "normal"
       ? (strikePrice - spotPrice) / expectedMove.expectedMoveDollars
@@ -88,9 +132,21 @@ export function estimateProbabilityAboveStrike(
     zScore,
     expectedMove,
     confidenceLabel: classifyConfidenceLabel(Math.abs(zScore)),
+    warnings: buildProbabilityWarnings({
+      realizedVolatility,
+      minutesToExpiry,
+      modelType,
+      zScore,
+      largestRecentMove1m: moveForWarnings,
+      degenerate: false,
+    }),
   }
 }
 
+/**
+ * Convert Kalshi **cents** (0–100 per contract dollar) to implied probability in [0, 1].
+ * Example: 47 cents → 0.47 "YES" probability mass before fees.
+ */
 export function calculateImpliedProbability(priceCents: number) {
   assertNonNegativeNumber(priceCents, "priceCents")
   if (priceCents > 100) {
@@ -100,6 +156,7 @@ export function calculateImpliedProbability(priceCents: number) {
   return clamp(priceCents / 100, 0, 1)
 }
 
+/** Model probability minus market-implied probability (same side). */
 export function calculateEdge(
   modelProbability: number,
   impliedProbability: number,
@@ -114,6 +171,9 @@ export function calculateEdge(
   }
 }
 
+/**
+ * Coarse volatility regime from annualized σ and the largest recent proportional move.
+ */
 export function classifyVolatilityRegime(
   realizedVolatility: number,
   largestRecentMove = 0,
@@ -162,9 +222,7 @@ export function buildVolatilityWarningFlags(
   }
 }
 
-export function summarizeVolatilityWarnings(
-  warningFlags: VolatilityWarningFlags,
-) {
+export function summarizeVolatilityWarnings(warningFlags: VolatilityWarningFlags) {
   return [
     warningFlags.elevatedRealizedVolatility
       ? "Elevated realized volatility."
@@ -225,6 +283,76 @@ export function calculateLargestAbsoluteMove(closes: number[]) {
   }
 
   return largest
+}
+
+function buildProbabilityWarnings(options: {
+  realizedVolatility: number
+  minutesToExpiry: number
+  modelType: ProbabilityModelType
+  zScore: number
+  largestRecentMove1m: number
+  degenerate: boolean
+}): string[] {
+  const {
+    realizedVolatility,
+    minutesToExpiry,
+    modelType,
+    zScore,
+    largestRecentMove1m,
+    degenerate,
+  } = options
+
+  const volFlags = buildVolatilityWarningFlags(
+    realizedVolatility,
+    largestRecentMove1m,
+  )
+  const messages: string[] = []
+
+  if (volFlags.fatTailCondition) {
+    messages.push(
+      "Fat-tail or stress conditions: BTC returns often exceed Gaussian tails; treat probabilities as fragile.",
+    )
+  } else if (volFlags.elevatedRealizedVolatility) {
+    messages.push(
+      "Elevated realized volatility: tail mass is plausibly larger than the normal CDF implies.",
+    )
+  }
+
+  if (volFlags.unusuallyLargeRecentMove) {
+    messages.push(
+      "Large recent single-bar moves: smooth diffusion scaling may understate short-horizon jump risk.",
+    )
+  }
+
+  if (degenerate) {
+    messages.push(
+      "Degenerate horizon or zero volatility: probability collapses to a step at the strike.",
+    )
+  }
+
+  if (minutesToExpiry > 0 && minutesToExpiry < SHORT_HORIZON_MINUTES) {
+    messages.push(
+      "Very short time to expiry: jumps, spreads, and settlement mechanics can dominate smooth diffusion.",
+    )
+  }
+
+  if (Math.abs(zScore) >= DEEP_TAIL_ABS_Z) {
+    messages.push(
+      "Strike sits in the deep tail (|z| is large): Gaussian tail mass is fragile for BTC.",
+    )
+  }
+
+  if (modelType === "lognormal" && !degenerate) {
+    messages.push(
+      "Lognormal shortcut omits the −½σ²t convexity term in log space; error grows with σ²t.",
+    )
+  }
+
+  return uniqueStrings(messages)
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values))
 }
 
 function classifyConfidenceLabel(absoluteZScore: number): ConfidenceLabel {
@@ -294,6 +422,7 @@ function normalCdf(value: number) {
   return 0.5 * (1 + erf(value / Math.SQRT2))
 }
 
+/** Abramowitz & Stegun approximation for erf, adequate for risk dashboards. */
 function erf(value: number) {
   const sign = value >= 0 ? 1 : -1
   const absolute = Math.abs(value)
