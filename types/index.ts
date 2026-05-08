@@ -117,6 +117,8 @@ export interface ProbabilityEstimate {
   zScore: number
   expectedMove: ExpectedMoveEstimate
   confidenceLabel: ConfidenceLabel
+  /** Present when the probability engine attaches model-level cautions. */
+  warnings?: string[]
 }
 
 export interface EdgeCalculation {
@@ -147,6 +149,8 @@ export interface RuleChecks {
   bankrollOk: boolean
   confidenceOk: boolean
   timeOk: boolean
+  /** Probability-model warnings and coinflip heuristics did not veto the setup. */
+  modelSetupOk: boolean
 }
 
 export interface MarketAnalysis {
@@ -154,6 +158,7 @@ export interface MarketAnalysis {
   distanceToStrikeDollars: number | null
   distanceToStrikePct: number | null
   minutesToSettlement: number | null
+  probabilityWarnings: string[] | null
   fairProbabilityAbove: number | null
   fairProbabilityBelow: number | null
   impliedProbabilityYesBid: number | null
