@@ -15,6 +15,10 @@ import {
   analyzeBtcSignalSuppression,
   type BtcSignalSuppressionSnapshot,
 } from "@/lib/analysis/signalSuppression"
+import {
+  analyzeBtcMarketState,
+  type BtcMarketStateSnapshot,
+} from "@/lib/analysis/marketState"
 
 export type BtcDirectionBias = "bullish" | "bearish" | "neutral"
 export type BtcMomentumStatus =
@@ -106,6 +110,7 @@ export interface BtcDecisionSnapshot {
   directionBias: BtcDirectionBias
   falseBreakout: BtcFalseBreakoutSnapshot
   marketQuality: BtcMarketQualitySnapshot
+  marketState: BtcMarketStateSnapshot
   marketRegime: BtcMarketRegimeSnapshot
   signalSuppression: BtcSignalSuppressionSnapshot
   confidenceScore: number
@@ -314,6 +319,14 @@ export function analyzeBtcPriceDecision(
     priceAccelerationBpsPerMin2,
     falseBreakoutAnalysis: falseBreakout,
   })
+  const marketState = analyzeBtcMarketState({
+    stale,
+    marketQuality,
+    marketRegime,
+    signalSuppression,
+    falseBreakout,
+    exchangeConsensus: options?.exchangeConsensus ?? null,
+  })
   const resolvedMarketQuality = {
     ...marketQuality,
     directionalReadout: signalSuppression.directionalReadout,
@@ -332,6 +345,7 @@ export function analyzeBtcPriceDecision(
     riskState,
     directionBias,
     signalQualityScore: resolvedMarketQuality.signalQualityScore,
+    marketState,
     volatilityRegime,
     spreadBps,
     trendPersistenceScore,
@@ -364,6 +378,7 @@ export function analyzeBtcPriceDecision(
     volatilityRegime,
     riskState,
     marketQuality,
+    marketState,
     marketRegime,
     signalSuppression,
     falseBreakout,
@@ -374,6 +389,7 @@ export function analyzeBtcPriceDecision(
     momentumStatus,
     chopState,
     marketQuality: resolvedMarketQuality,
+    marketState,
     marketRegime,
     signalSuppression,
     spreadState,
@@ -392,6 +408,7 @@ export function analyzeBtcPriceDecision(
     trendPersistenceScore,
     observationWindow,
     marketQuality: resolvedMarketQuality,
+    marketState,
     marketRegime,
     signalSuppression,
     falseBreakout,
@@ -421,6 +438,7 @@ export function analyzeBtcPriceDecision(
     directionBias,
     falseBreakout,
     marketQuality: resolvedMarketQuality,
+    marketState,
     marketRegime,
     signalSuppression,
     confidenceScore,
@@ -869,6 +887,7 @@ function computeConfidenceScore({
   riskState,
   directionBias,
   signalQualityScore,
+  marketState,
   marketRegime,
   signalSuppression,
   falseBreakout,
@@ -884,6 +903,7 @@ function computeConfidenceScore({
   riskState: BtcRiskState
   directionBias: BtcDirectionBias
   signalQualityScore: number
+  marketState: BtcMarketStateSnapshot
   marketRegime: BtcMarketRegimeSnapshot
   signalSuppression: BtcSignalSuppressionSnapshot
   falseBreakout: BtcFalseBreakoutSnapshot
@@ -916,6 +936,17 @@ function computeConfidenceScore({
   const breakoutRiskPenalty = clamp(falseBreakout.falseBreakoutRisk / 100, 0, 0.3)
   const breakoutExhaustionPenalty = clamp(falseBreakout.exhaustionScore / 100, 0, 0.18)
   const breakoutFollowThrough = clamp(falseBreakout.followThroughQuality / 100, 0, 1)
+  const marketStateQuality = clamp(marketState.signalInterpretabilityScore / 100, 0, 1)
+  const marketStatePenalty =
+    marketState.state === "unavailable"
+      ? 0.22
+      : marketState.state === "unstable"
+        ? 0.12
+        : marketState.state === "noisy"
+          ? 0.08
+          : marketState.state === "mixed"
+            ? 0.03
+            : 0
   const regimeUncertaintyPenalty =
     marketRegime.regimeClarity === "ambiguous" ? 0.08 : marketRegime.isTransitioning ? 0.05 : 0
   const suppressionPenalty = clamp(signalSuppression.confidencePenalty / 100, 0, 0.3)
@@ -925,6 +956,7 @@ function computeConfidenceScore({
     persistence * 0.22 +
     spreadQuality * 0.1 +
     signalQuality * 0.14 +
+    marketStateQuality * 0.1 +
     regimeSupport * 0.08 +
     regimeStability * 0.06 +
     regimeAlignment * 0.08 +
@@ -935,6 +967,7 @@ function computeConfidenceScore({
     alignmentBonus -
     suppressionPenalty -
     regimeUncertaintyPenalty -
+    marketStatePenalty -
     regimePenalty -
     riskPenalty -
     stalePenalty +
@@ -1026,6 +1059,7 @@ function buildAlerts({
   volatilityRegime,
   riskState,
   marketQuality,
+  marketState,
   marketRegime,
   signalSuppression,
   falseBreakout,
@@ -1037,6 +1071,7 @@ function buildAlerts({
   volatilityRegime: BtcVolatilityRegime
   riskState: BtcRiskState
   marketQuality: BtcMarketQualitySnapshot
+  marketState: BtcMarketStateSnapshot
   marketRegime: BtcMarketRegimeSnapshot
   signalSuppression: BtcSignalSuppressionSnapshot
   falseBreakout: BtcFalseBreakoutSnapshot
@@ -1053,6 +1088,7 @@ function buildAlerts({
     volatilityRegime === "extreme" ? "BTC is in an extreme volatility regime." : null,
     riskState === "avoid" ? "Risk state is avoid until the feed and regime normalize." : null,
     marketQuality.warning,
+    marketState.warning,
     signalSuppression.warning,
     falseBreakout.warning,
     ...marketRegime.warnings,
@@ -1065,6 +1101,7 @@ function buildNotes({
   trendPersistenceScore,
   observationWindow,
   marketQuality,
+  marketState,
   marketRegime,
   signalSuppression,
   falseBreakout,
@@ -1074,12 +1111,14 @@ function buildNotes({
   trendPersistenceScore: number
   observationWindow: BtcObservationWindow
   marketQuality: BtcMarketQualitySnapshot
+  marketState: BtcMarketStateSnapshot
   marketRegime: BtcMarketRegimeSnapshot
   signalSuppression: BtcSignalSuppressionSnapshot
   falseBreakout: BtcFalseBreakoutSnapshot
 }) {
   return [
     `Direction bias reads ${marketQuality.directionalReadout}.`,
+    `Market state is ${marketState.state} with ${marketState.interpretability} interpretability (${marketState.signalInterpretabilityScore}/100).`,
     `Momentum reads ${momentumStatus}.`,
     `Market structure currently looks ${chopState}.`,
     `Trend persistence score is ${trendPersistenceScore}.`,
@@ -1096,6 +1135,7 @@ function buildDecisionExplanation({
   momentumStatus,
   chopState,
   marketQuality,
+  marketState,
   marketRegime,
   signalSuppression,
   spreadState,
@@ -1111,6 +1151,7 @@ function buildDecisionExplanation({
   momentumStatus: BtcMomentumStatus
   chopState: BtcChopState
   marketQuality: BtcMarketQualitySnapshot
+  marketState: BtcMarketStateSnapshot
   marketRegime: BtcMarketRegimeSnapshot
   signalSuppression: BtcSignalSuppressionSnapshot
   spreadState: BtcSpreadState
@@ -1186,6 +1227,7 @@ function buildDecisionExplanation({
           ? `5m return is ${formatSignedPercent(fiveMinuteReturn)} and the directional readout is ${directionalPressure}.`
           : `5m return remains constructive at ${formatSignedPercent(fiveMinuteReturn)}.`,
         `Directional readout is ${directionalPressure}.`,
+        `Market state is ${marketState.state} (${marketState.interpretability} interpretability).`,
         `Regime: ${marketRegime.primaryRegime} (${marketRegime.regimeConfidence}/100 confidence).`,
       ],
       conflictingSignals: [
@@ -1234,6 +1276,7 @@ function buildDecisionExplanation({
           ? `5m return is ${formatSignedPercent(fiveMinuteReturn)} and the directional readout is ${directionalPressure}.`
           : `5m return remains weak at ${formatSignedPercent(fiveMinuteReturn)}.`,
         `Directional readout is ${directionalPressure}.`,
+        `Market state is ${marketState.state} (${marketState.interpretability} interpretability).`,
         `Regime: ${marketRegime.primaryRegime} (${marketRegime.regimeConfidence}/100 confidence).`,
       ],
       conflictingSignals: [
@@ -1268,6 +1311,7 @@ function buildDecisionExplanation({
       `Trend persistence sits at ${persistenceLabel}.`,
       `The structure is currently ${chopState}.`,
       `Directional readout is ${directionalPressure}.`,
+      `Market state is ${marketState.state} (${marketState.interpretability} interpretability).`,
       `Breakout intelligence reads ${falseBreakout.breakoutStatus} (${falseBreakout.breakoutHealthScore}/100 health).`,
       ...(suppressionActive
         ? [`Suppression reasons: ${signalSuppression.reasons.join(", ")}.`]
@@ -1719,7 +1763,8 @@ function formatSignedPercent(value: number | null) {
     return "n/a"
   }
 
-  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`
+  const digits = Math.abs(value) < 1 ? 4 : 2
+  return `${value >= 0 ? "+" : ""}${value.toFixed(digits)}%`
 }
 
 function formatSignedMetric(value: number | null, suffix: string) {
@@ -1727,7 +1772,8 @@ function formatSignedMetric(value: number | null, suffix: string) {
     return "n/a"
   }
 
-  return `${value >= 0 ? "+" : ""}${value.toFixed(2)} ${suffix}`
+  const digits = Math.abs(value) < 1 ? 4 : 2
+  return `${value >= 0 ? "+" : ""}${value.toFixed(digits)} ${suffix}`
 }
 
 function velocityDirection(oneMinuteReturn: number | null) {

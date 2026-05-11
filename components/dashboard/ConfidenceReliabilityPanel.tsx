@@ -54,6 +54,9 @@ export function ConfidenceReliabilityPanel({
               {diagnostics.regimeQualifiedResolvedCount} regime-qualified
             </Badge>
             <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+              {diagnostics.marketStateQualifiedResolvedCount} market-state-qualified
+            </Badge>
+            <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
               {diagnostics.suppressionQualifiedResolvedCount} suppression-qualified
             </Badge>
           </div>
@@ -470,7 +473,8 @@ function formatSignedPercent(value: number | null) {
     return "n/a"
   }
 
-  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`
+  const digits = Math.abs(value) < 1 ? 4 : 2
+  return `${value >= 0 ? "+" : ""}${value.toFixed(digits)}%`
 }
 
 function toneForMove(value: number | null) {

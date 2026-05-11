@@ -1,16 +1,10 @@
 "use client"
 
 import {
-  Activity,
   AlertTriangle,
-  ArrowDownRight,
-  ArrowUpRight,
-  CircleSlash2,
-  Gauge,
   LineChart,
   RefreshCw,
   Satellite,
-  Zap,
 } from "lucide-react"
 import { useMemo, useState, type ReactNode } from "react"
 
@@ -43,6 +37,7 @@ import {
   exportBtcJournalAsCsv,
   exportBtcJournalAsJson,
 } from "@/lib/btc/journal"
+import { BtcCandlestickChart } from "@/components/dashboard/BtcCandlestickChart"
 import type { BtcJournalRow, BtcJournalOutcome } from "@/lib/btc/journal-types"
 
 export function BtcDecisionTerminal() {
@@ -83,8 +78,6 @@ export function BtcDecisionTerminal() {
       : connectionState === "reconnecting" || connectionState === "connecting"
         ? "bg-amber-500/15 text-amber-200 border-amber-500/20"
         : "bg-rose-500/15 text-rose-200 border-rose-500/20"
-
-  const sparkline = ticks.slice(-120)
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-background text-foreground">
@@ -140,48 +133,79 @@ export function BtcDecisionTerminal() {
 
           <Card className="border-white/10 bg-[#0c1628]/90">
             <CardContent className="space-y-4 pt-5">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
-                    Live BTC-USD
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="text-[10px] uppercase tracking-[0.28em] text-muted-foreground">
+                    BTC Terminal Snapshot
                   </div>
-                  <div className={cn("mt-2 font-mono text-4xl font-semibold tabular-nums sm:text-5xl", priceDirectionClass)}>
-                    {formatCurrency(price, 0)}
+                  <div className={cn("font-mono text-4xl font-semibold tabular-nums sm:text-5xl", priceDirectionClass)}>
+                    {formatCurrency(price, 2)}
                   </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                    <span>{priceMove === null ? "No move yet" : `${priceMove >= 0 ? "+" : ""}${formatPercent(priceMove, 2)}`}</span>
-                    <span className="opacity-60">•</span>
-                    <span>{formatTradeSize(decision.volume24h)}</span>
-                    <span className="opacity-60">•</span>
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                    <span>{priceMove === null ? "No move yet" : formatSignedPercentValue(priceMove)}</span>
+                    <span className="opacity-50">|</span>
                     <span>{decision.spread !== null ? `Spread ${formatCurrency(decision.spread, 2)}` : "Spread n/a"}</span>
+                    <span className="opacity-50">|</span>
+                    <span>{formatTradeSize(decision.volume24h)}</span>
                   </div>
                 </div>
-                <div className="flex flex-col items-end gap-2 text-right">
-                  <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
-                    {decision.marketQuality.directionalReadout}
-                  </Badge>
-                  <div className="text-xs uppercase tracking-[0.24em] text-muted-foreground">
-                    Confidence
-                  </div>
-                  <div className="font-mono text-2xl font-semibold tabular-nums text-foreground">
-                    {decision.confidenceScore}
-                  </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusToken tone={marketStateTone(decision.marketState.state)}>
+                    STATE: {decision.marketState.state}
+                  </StatusToken>
+                  <StatusToken tone={suppressionTone(decision.signalSuppression.level)}>
+                    SUPPRESSION: {decision.signalSuppression.level}
+                  </StatusToken>
+                  <StatusToken tone={regimeTone(marketRegime.primaryRegime)}>
+                    REGIME: {marketRegime.primaryRegime}
+                  </StatusToken>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <TerminalToken label="READ" value={decision.marketQuality.directionalReadout} />
+                <TerminalToken label="CONF" value={`${decision.confidenceScore}/100`} />
+                <TerminalToken label="RISK" value={decision.riskState} />
+                <TerminalToken label="WIN" value={decision.observationWindow} />
+                <TerminalToken label="MKT" value={decision.marketState.interpretability} />
+                <TerminalToken label="SPD" value={decision.marketQuality.stabilityAssessment} />
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-2 text-sm leading-6 text-muted-foreground">
+                <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                  What to watch next
+                </span>
+                <div className="mt-1 text-foreground">{decision.explanation.biasChangeCondition}</div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 <MiniStat label="Bid" value={formatCurrency(decision.bid, 2)} />
                 <MiniStat label="Ask" value={formatCurrency(decision.ask, 2)} />
-                <MiniStat label="Spread" value={formatCurrency(decision.spread, 2)} />
-                <MiniStat label="Volume 24h" value={formatTradeSize(decision.volume24h)} />
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-                <Sparkline ticks={sparkline} />
+                <MiniStat label="Consensus" value={formatCurrency(priceConsensus.consolidatedPrice, 2)} />
               </div>
             </CardContent>
           </Card>
         </header>
+
+        <Card className="border-white/10 bg-[#0c1628]/88">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <CardTitle>BTC Candlestick</CardTitle>
+                <CardDescription>
+                  Consolidated multi-exchange price action, aggregated into live OHLC candles.
+                </CardDescription>
+              </div>
+              <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+                {priceConsensus.activeExchangeCount}/{priceConsensus.totalExchangeCount} active
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <BtcCandlestickChart ticks={ticks} />
+          </CardContent>
+        </Card>
 
         <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
           <div className="space-y-4">
@@ -189,9 +213,45 @@ export function BtcDecisionTerminal() {
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <CardTitle>Decision Summary</CardTitle>
+                    <CardTitle>Live BTC State</CardTitle>
                     <CardDescription>
-                      Direction, confidence, volatility, and short-term regime.
+                      Consolidated multi-exchange price and live candlestick view.
+                    </CardDescription>
+                  </div>
+                  <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+                    {priceConsensus.activeExchangeCount}/{priceConsensus.totalExchangeCount} exchanges
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-6">
+                  <MiniStat label="Consensus price" value={formatCurrency(price, 2)} />
+                  <MiniStat
+                    label="Consensus spread"
+                    value={priceConsensus.spread === null ? "n/a" : formatCurrency(priceConsensus.spread, 2)}
+                  />
+                  <MiniStat
+                    label="Active feeds"
+                    value={`${priceConsensus.activeExchangeCount}/${priceConsensus.totalExchangeCount}`}
+                  />
+                  <MiniStat label="Max deviation" value={formatPercentOrNA(priceConsensus.maxDeviationPct, 2)} />
+                  <MiniStat label="Latency" value={formatLatency(priceConsensus.latencyMs)} />
+                  <MiniStat label="Volume" value={formatTradeSize(decision.volume24h)} />
+                </div>
+
+                <BtcCandlestickChart ticks={ticks} />
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="space-y-4">
+            <Card className="border-white/10 bg-[#0c1628]/88">
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <CardTitle>Decision Snapshot</CardTitle>
+                    <CardDescription>
+                      High-level readout for short-horizon BTC interpretation.
                     </CardDescription>
                   </div>
                   <Badge
@@ -209,325 +269,275 @@ export function BtcDecisionTerminal() {
                   </Badge>
                 </div>
               </CardHeader>
-              <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-                <DecisionChip
-                  label="Direction bias"
-                  value={decision.marketQuality.directionalReadout}
-                  icon={directionIcon(decision.directionBias)}
-                />
-                <DecisionChip
-                  label="Volatility regime"
-                  value={decision.volatilityRegime}
-                  icon={<Gauge className="size-4" />}
-                />
-                <DecisionChip
-                  label="Momentum"
-                  value={decision.momentumStatus}
-                  icon={<Zap className="size-4" />}
-                />
-                <DecisionChip
-                  label="Observation window"
-                  value={decision.observationWindow}
-                  icon={<Activity className="size-4" />}
-                />
-                <DecisionChip
-                  label="Market regime"
-                  value={marketRegime.primaryRegime}
-                  icon={<RefreshCw className="size-4" />}
-                />
-              </CardContent>
-            </Card>
-
-            <Card className="border-white/10 bg-[#0c1628]/88">
-              <CardHeader className="pb-3">
-                <CardTitle>Bias Explanation</CardTitle>
-                <CardDescription>
-                  Why the terminal is leaning this way, and what would change it.
-                </CardDescription>
-              </CardHeader>
               <CardContent className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <MiniStat label="Directional read" value={decision.marketQuality.directionalReadout} />
+                  <MiniStat label="Confidence" value={`${decision.confidenceScore}/100`} />
+                  <MiniStat label="Observation window" value={decision.observationWindow} />
+                  <MiniStat label="Market state" value={decision.marketState.state} />
+                </div>
+                <ExplanationBlock label="Primary reason" value={decision.explanation.primaryReason} />
                 <ExplanationBlock
-                  label="Primary reason"
-                  value={decision.explanation.primaryReason}
-                />
-                <ExplanationList
-                  label="Supporting signals"
-                  items={decision.explanation.supportingSignals}
-                />
-                <ExplanationList
-                  label="Conflicting signals"
-                  items={decision.explanation.conflictingSignals}
-                />
-                <ExplanationBlock
-                  label="Invalidation"
-                  value={decision.explanation.invalidationCondition}
-                />
-                <ExplanationBlock
-                  label="What would change the bias"
+                  label="What to watch next"
                   value={decision.explanation.biasChangeCondition}
                 />
-              </CardContent>
-            </Card>
-
-            <div className="grid gap-4 lg:grid-cols-2">
-              <AnalyticsPanel
-                title="Momentum"
-                description="Return shape, acceleration, and persistence."
-                icon={<ArrowUpRight className="size-4" />}
-                rows={[
-                  ["Tick velocity", formatMetric(decision.tickVelocityPerMin, "ticks/min")],
-                  ["1m return", formatMetric(decision.rollingReturns["1m"], "%")],
-                  ["5m return", formatMetric(decision.rollingReturns["5m"], "%")],
-                  ["15m return", formatMetric(decision.rollingReturns["15m"], "%")],
-                  ["Acceleration", formatMetric(decision.priceAccelerationBpsPerMin2, "bps/min^2")],
-                  ["Trend persistence", `${decision.trendPersistenceScore}/100`],
-                ]}
-              />
-              <AnalyticsPanel
-                title="Volatility"
-                description="Compression, expansion, and market regime."
-                icon={<ArrowDownRight className="size-4" />}
-                rows={[
-                  ["1m RV", formatMetric(decision.realizedVolatility["1m"], "% ann.")],
-                  ["5m RV", formatMetric(decision.realizedVolatility["5m"], "% ann.")],
-                  ["15m RV", formatMetric(decision.realizedVolatility["15m"], "% ann.")],
-                  ["Spread state", decision.spreadState],
-                  ["Spread delta", formatMetric(decision.spreadDeltaPct, "%")],
-                  ["Chop state", decision.chopState],
-                ]}
-              />
-            </div>
-
-            <Card className="border-white/10 bg-[#0c1628]/88">
-              <CardHeader className="pb-3">
-                <CardTitle>Tick Stream</CardTitle>
-                <CardDescription>
-                  Most recent Coinbase BTC-USD ticks with millisecond timestamps.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="max-h-[28rem] overflow-auto rounded-2xl border border-white/10">
-                  <table className="min-w-full text-left text-xs">
-                    <thead className="sticky top-0 bg-[#08111f] text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-                      <tr>
-                        <th className="px-3 py-2">Time</th>
-                        <th className="px-3 py-2">Price</th>
-                        <th className="px-3 py-2">Bid</th>
-                        <th className="px-3 py-2">Ask</th>
-                        <th className="px-3 py-2">Spread</th>
-                        <th className="px-3 py-2">Size</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                      {ticks.length > 0 ? (
-                        [...ticks]
-                          .slice(-24)
-                          .reverse()
-                          .map((tick, index, reversed) => (
-                            <TickRow
-                              key={`${tick.sequence}-${tick.receivedAtMs}`}
-                              tick={tick}
-                              previous={reversed[index + 1] ?? null}
-                            />
-                          ))
-                      ) : (
-                        <tr>
-                          <td colSpan={6} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                            Waiting for the first live tick from Coinbase.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          <div className="space-y-4">
-            <Card className="border-white/10 bg-[#0c1628]/88">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <CardTitle>Alert Panel</CardTitle>
-                    <CardDescription>
-                      Feed issues, sudden moves, and regime warnings.
-                    </CardDescription>
-                  </div>
-                  {decision.alerts.length > 0 ? (
-                    <Badge variant="outline" className="border-amber-500/20 bg-amber-500/10 text-amber-200">
-                      {decision.alerts.length}
-                    </Badge>
-                  ) : (
-                    <Badge variant="outline" className="border-emerald-500/20 bg-emerald-500/10 text-emerald-200">
-                      clear
-                    </Badge>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {error ? (
-                  <AlertRow tone="danger" text={error} />
-                ) : null}
-                {isStale ? (
+                {decision.marketState.warning || decision.signalSuppression.warning ? (
                   <AlertRow
-                    tone="danger"
-                    text="The live feed has gone stale. Reconnect logic is active."
+                    tone="warning"
+                    text={decision.marketState.warning ?? decision.signalSuppression.warning ?? ""}
                   />
                 ) : null}
-                {decision.alerts.length > 0 ? (
-                  decision.alerts.map((alert) => (
-                    <AlertRow key={alert} tone="warning" text={alert} />
-                  ))
-                ) : (
-                  <AlertRow
-                    tone="neutral"
-                    text="No active alerts. Feed health and short-term structure are within normal bounds."
-                  />
-                )}
               </CardContent>
             </Card>
 
             <Card className="border-white/10 bg-[#0c1628]/88">
               <CardHeader className="pb-3">
-                <CardTitle>Decision Notes</CardTitle>
+                <CardTitle>Market State Summary</CardTitle>
                 <CardDescription>
-                  Compact readout for quick monitoring.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {decision.notes.map((note) => (
-                  <div
-                    key={note}
-                    className="rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-2 text-sm text-muted-foreground"
-                  >
-                    {note}
-                  </div>
-                ))}
-                <div className="grid grid-cols-2 gap-3 pt-2">
-                  <MiniStat label="Feed" value={feedLabel(connectionState, isStale)} />
-                  <MiniStat label="Quality" value={feedQuality(decision.dataQuality.tickCount, decision.dataQuality.coverageMinutes)} />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <MiniStat label="Last message" value={formatOptionalMs(lastMessageAtMs)} />
-                  <MiniStat label="Heartbeat" value={formatOptionalMs(lastHeartbeatAtMs)} />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <MiniStat label="Reconnects" value={String(reconnectAttempt)} />
-                  <MiniStat label="Ticks" value={String(decision.dataQuality.tickCount)} />
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-white/10 bg-[#0c1628]/88">
-              <CardHeader className="pb-3">
-                <CardTitle>Market Structure</CardTitle>
-                <CardDescription>
-                  Compact view of the current BTC microstructure.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-3 sm:grid-cols-2">
-                <MiniStat label="Spread bps" value={formatMetric(decision.spreadBps, "bps")} />
-                <MiniStat label="Data stale" value={decision.dataQuality.stale ? "yes" : "no"} />
-                <MiniStat label="Volume 24h" value={formatTradeSize(decision.volume24h)} />
-                <MiniStat label="Coverage" value={formatCoverage(decision.dataQuality.coverageMinutes)} />
-              </CardContent>
-            </Card>
-
-            <Card className="border-white/10 bg-[#0c1628]/88">
-              <CardHeader className="pb-3">
-                <CardTitle>Price Consensus</CardTitle>
-                <CardDescription>
-                  Consolidated price from active exchange feeds.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-3 sm:grid-cols-2">
-                <MiniStat
-                  label="Consensus price"
-                  value={
-                    priceConsensus.consolidatedPrice === null
-                      ? "stale / unavailable"
-                      : formatCurrency(priceConsensus.consolidatedPrice, 0)
-                  }
-                />
-                <MiniStat
-                  label="Active exchanges"
-                  value={`${priceConsensus.activeExchangeCount}/${priceConsensus.totalExchangeCount}`}
-                />
-                <MiniStat
-                  label="Max deviation"
-                  value={formatMetric(priceConsensus.maxDeviationPct, "%")}
-                />
-                <MiniStat
-                  label="Agreement score"
-                  value={`${priceConsensus.agreementScore}/100`}
-                />
-              </CardContent>
-            </Card>
-
-            <Card className="border-white/10 bg-[#0c1628]/88">
-              <CardHeader className="pb-3">
-                <CardTitle>Market Quality</CardTitle>
-                <CardDescription>
-                  Guardrail for directional clarity and signal noise.
+                  Public HFT-inspired read on interpretability and market cleanliness.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="grid gap-3 sm:grid-cols-2">
+                  <MiniStat label="State" value={decision.marketState.state} />
+                  <MiniStat label="Interpretability" value={decision.marketState.interpretability} />
+                  <MiniStat label="Main risk" value={decision.marketState.mainRisk} />
                   <MiniStat
-                    label="Signal score"
-                    value={`${decision.marketQuality.signalQualityScore}/100`}
-                  />
-                  <MiniStat
-                    label="Noise level"
-                    value={`${decision.marketQuality.noiseLevel}/100`}
-                  />
-                  <MiniStat
-                    label="Directional clarity"
-                    value={decision.marketQuality.directionalClarity}
-                  />
-                  <MiniStat
-                    label="Stability"
-                    value={decision.marketQuality.stabilityAssessment}
-                  />
-                  <MiniStat
-                    label="Exchange agreement"
-                    value={`${decision.marketQuality.exchangeAgreementScore}/100`}
-                  />
-                  <MiniStat
-                    label="Stale feeds"
-                    value={`${decision.marketQuality.staleExchangeCount}/${decision.marketQuality.totalExchangeCount}`}
+                    label="Score"
+                    value={`${decision.marketState.signalInterpretabilityScore}/100`}
                   />
                 </div>
+                <div className="space-y-2 rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-3">
+                  <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                    Primary reason
+                  </div>
+                  <div className="text-sm leading-6 text-foreground">
+                    {decision.marketState.primaryReason}
+                  </div>
+                </div>
+                {decision.marketState.warning ? (
+                  <AlertRow tone="warning" text={decision.marketState.warning} />
+                ) : null}
+              </CardContent>
+            </Card>
+          </div>
+        </section>
+
+        <div className="space-y-4">
+          <CollapsibleSection
+            title="Exchange diagnostics"
+            description="Live exchange health, price consensus, and raw tick stream."
+          >
+            <div className="space-y-4">
+              <Card className="border-white/10 bg-[#0c1628]/88">
+                <CardHeader className="pb-3">
+                  <CardTitle>Price Consensus</CardTitle>
+                  <CardDescription>
+                    Consolidated price from active exchange feeds.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-3 sm:grid-cols-2">
+                  <MiniStat
+                    label="Consensus price"
+                    value={
+                      priceConsensus.consolidatedPrice === null
+                        ? "stale / unavailable"
+                        : formatCurrency(priceConsensus.consolidatedPrice, 2)
+                    }
+                  />
+                  <MiniStat
+                    label="Active exchanges"
+                    value={`${priceConsensus.activeExchangeCount}/${priceConsensus.totalExchangeCount}`}
+                  />
+                  <MiniStat
+                    label="Max deviation"
+                    value={formatPercentOrNA(priceConsensus.maxDeviationPct, 2)}
+                  />
+                  <MiniStat
+                    label="Agreement score"
+                    value={`${priceConsensus.agreementScore}/100`}
+                  />
+                </CardContent>
+              </Card>
+
+              <Card className="border-white/10 bg-[#0c1628]/88">
+                <CardHeader className="pb-3">
+                  <CardTitle>Exchange Health</CardTitle>
+                  <CardDescription>
+                    Live status and latest quote context per exchange.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {exchangeHealth.map((feed) => (
+                    <ExchangeHealthRow key={feed.exchange} feed={feed} />
+                  ))}
+                </CardContent>
+              </Card>
+
+              <Card className="border-white/10 bg-[#0c1628]/88">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <CardTitle>Alerts</CardTitle>
+                      <CardDescription>
+                        Feed issues, sudden moves, and regime warnings.
+                      </CardDescription>
+                    </div>
+                    {decision.alerts.length > 0 ? (
+                      <Badge variant="outline" className="border-amber-500/20 bg-amber-500/10 text-amber-200">
+                        {decision.alerts.length}
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="border-emerald-500/20 bg-emerald-500/10 text-emerald-200">
+                        clear
+                      </Badge>
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {error ? <AlertRow tone="danger" text={error} /> : null}
+                  {isStale ? (
+                    <AlertRow
+                      tone="danger"
+                      text="The live feed has gone stale. Reconnect logic is active."
+                    />
+                  ) : null}
+                  {decision.alerts.length > 0 ? (
+                    decision.alerts.map((alert) => (
+                      <AlertRow key={alert} tone="warning" text={alert} />
+                    ))
+                  ) : (
+                    <AlertRow
+                      tone="neutral"
+                      text="No active alerts. Feed health and short-term structure are within normal bounds."
+                    />
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card className="border-white/10 bg-[#0c1628]/88">
+                <CardHeader className="pb-3">
+                  <CardTitle>Tick Stream</CardTitle>
+                  <CardDescription>
+                    Most recent consensus ticks with millisecond timestamps.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="max-h-[24rem] overflow-auto rounded-2xl border border-white/10">
+                    <table className="min-w-full text-left text-xs">
+                      <thead className="sticky top-0 bg-[#08111f] text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                        <tr>
+                          <th className="px-3 py-2">Time</th>
+                          <th className="px-3 py-2">Price</th>
+                          <th className="px-3 py-2">Bid</th>
+                          <th className="px-3 py-2">Ask</th>
+                          <th className="px-3 py-2">Spread</th>
+                          <th className="px-3 py-2">Size</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5">
+                        {ticks.length > 0 ? (
+                          [...ticks]
+                            .slice(-24)
+                            .reverse()
+                            .map((tick, index, reversed) => (
+                              <TickRow
+                                key={`${tick.sequence}-${tick.receivedAtMs}`}
+                                tick={tick}
+                                previous={reversed[index + 1] ?? null}
+                              />
+                            ))
+                        ) : (
+                          <tr>
+                            <td
+                              colSpan={6}
+                              className="px-3 py-8 text-center text-sm text-muted-foreground"
+                            >
+                              Waiting for the first live consensus tick.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            title="Market regime"
+            description="Regime classification, confidence, stability, and recent shifts."
+          >
+            <Card className="border-white/10 bg-[#0c1628]/88">
+              <CardHeader className="pb-3">
+                <CardTitle>Market Regime</CardTitle>
+                <CardDescription>
+                  Classifies whether BTC is trending, reverting, compressing, or destabilizing.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <MiniStat label="Primary regime" value={marketRegime.primaryRegime} />
+                  <MiniStat label="Confidence" value={`${marketRegime.regimeConfidence}/100`} />
+                  <MiniStat label="Stability" value={`${marketRegime.regimeStabilityScore}/100`} />
+                  <MiniStat label="Clarity" value={marketRegime.regimeClarity} />
+                </div>
+
+                <div className="space-y-2 rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-3">
+                  <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                    Explanation
+                  </div>
+                  <div className="text-sm leading-6 text-foreground">
+                    {marketRegime.explanation}
+                  </div>
+                </div>
+
                 <div className="flex flex-wrap gap-2">
                   <Badge
                     variant="outline"
                     className={cn(
                       "border-white/10",
-                      decision.marketQuality.signalQualityState === "strong signal"
-                        ? "bg-emerald-500/10 text-emerald-200"
-                        : decision.marketQuality.signalQualityState === "moderate signal"
-                          ? "bg-sky-500/10 text-sky-200"
-                          : decision.marketQuality.signalQualityState === "weak signal"
-                            ? "bg-amber-500/10 text-amber-200"
+                      marketRegime.isTransitioning
+                        ? "bg-amber-500/10 text-amber-200"
+                        : marketRegime.regimeClarity === "clear"
+                          ? "bg-emerald-500/10 text-emerald-200"
+                          : marketRegime.regimeClarity === "mixed"
+                            ? "bg-sky-500/10 text-sky-200"
                             : "bg-rose-500/10 text-rose-200",
                     )}
                   >
-                    {decision.marketQuality.signalQualityState}
+                    {marketRegime.isTransitioning ? "transitioning" : marketRegime.regimeClarity}
                   </Badge>
-                  <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
-                    {decision.marketQuality.conflictingSignalCount} conflicts
-                  </Badge>
+                  {marketRegime.secondaryRegime ? (
+                    <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+                      secondary: {marketRegime.secondaryRegime}
+                    </Badge>
+                  ) : null}
                 </div>
-                {decision.marketQuality.warning ? (
-                  <div className="flex gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3 py-3 text-sm text-amber-100">
-                    <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-                    <div>{decision.marketQuality.warning}</div>
+
+                {regimeWarnings.length > 0 || marketRegime.warnings.length > 0 ? (
+                  <div className="space-y-2">
+                    {Array.from(new Set([...marketRegime.warnings, ...regimeWarnings])).map((warning) => (
+                      <AlertRow key={warning} tone="warning" text={warning} />
+                    ))}
                   </div>
                 ) : null}
+
+                <MarketRegimeTimeline
+                  asOfMs={decision.asOfMs}
+                  currentRegime={marketRegime}
+                  transitions={regimeTransitions}
+                  warnings={Array.from(new Set([...marketRegime.warnings, ...regimeWarnings]))}
+                />
               </CardContent>
             </Card>
+          </CollapsibleSection>
 
+          <CollapsibleSection
+            title="Signal suppression"
+            description="Guardrail for weak, stale, contradictory, or unstable conditions."
+          >
             <Card className="border-white/10 bg-[#0c1628]/88">
               <CardHeader className="pb-2">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -542,16 +552,18 @@ export function BtcDecisionTerminal() {
               <CardContent className="space-y-3">
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-3">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-2 font-mono text-[11px] uppercase tracking-[0.22em] text-slate-200">
-                    <span className={cn(
-                      "rounded border px-2 py-1",
-                      decision.signalSuppression.level === "none"
-                        ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
-                        : decision.signalSuppression.level === "caution"
-                          ? "border-amber-500/20 bg-amber-500/10 text-amber-200"
-                          : decision.signalSuppression.level === "suppress directional bias"
-                            ? "border-rose-500/20 bg-rose-500/10 text-rose-200"
-                            : "border-slate-500/20 bg-slate-500/10 text-slate-200",
-                    )}>
+                    <span
+                      className={cn(
+                        "rounded border px-2 py-1",
+                        decision.signalSuppression.level === "none"
+                          ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
+                          : decision.signalSuppression.level === "caution"
+                            ? "border-amber-500/20 bg-amber-500/10 text-amber-200"
+                            : decision.signalSuppression.level === "suppress directional bias"
+                              ? "border-rose-500/20 bg-rose-500/10 text-rose-200"
+                              : "border-slate-500/20 bg-slate-500/10 text-slate-200",
+                      )}
+                    >
                       SUPPRESSION: {decision.signalSuppression.level}
                     </span>
                     <span className="text-white/30">|</span>
@@ -641,7 +653,12 @@ export function BtcDecisionTerminal() {
                 </div>
               </CardContent>
             </Card>
+          </CollapsibleSection>
 
+          <CollapsibleSection
+            title="Breakout intelligence"
+            description="Breakout direction, follow-through quality, and false-breakout risk."
+          >
             <Card className="border-white/10 bg-[#0c1628]/88">
               <CardHeader className="pb-2">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -656,10 +673,12 @@ export function BtcDecisionTerminal() {
               <CardContent className="space-y-3">
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-3">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-2 font-mono text-[11px] uppercase tracking-[0.22em] text-slate-200">
-                    <span className={cn(
-                      "rounded border px-2 py-1",
-                      breakoutStatusTone(decision.falseBreakout.breakoutStatus),
-                    )}>
+                    <span
+                      className={cn(
+                        "rounded border px-2 py-1",
+                        breakoutStatusTone(decision.falseBreakout.breakoutStatus),
+                      )}
+                    >
                       STATUS: {decision.falseBreakout.breakoutStatus}
                     </span>
                     <span className="text-white/30">|</span>
@@ -736,85 +755,119 @@ export function BtcDecisionTerminal() {
                 </div>
               </CardContent>
             </Card>
+          </CollapsibleSection>
 
-            <Card className="border-white/10 bg-[#0c1628]/88">
-              <CardHeader className="pb-3">
-                <CardTitle>Market Regime</CardTitle>
-                <CardDescription>
-                  Classifies whether BTC is trending, reverting, compressing, or destabilizing.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                  <MiniStat label="Primary regime" value={marketRegime.primaryRegime} />
-                  <MiniStat label="Confidence" value={`${marketRegime.regimeConfidence}/100`} />
-                  <MiniStat label="Stability" value={`${marketRegime.regimeStabilityScore}/100`} />
-                  <MiniStat label="Clarity" value={marketRegime.regimeClarity} />
-                </div>
-
-                <div className="space-y-2 rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-3">
-                  <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-                    Explanation
+          <CollapsibleSection
+            title="Model reliability"
+            description="Market quality, decision notes, and calibration diagnostics."
+          >
+            <div className="space-y-4">
+              <Card className="border-white/10 bg-[#0c1628]/88">
+                <CardHeader className="pb-3">
+                  <CardTitle>Market Quality</CardTitle>
+                  <CardDescription>
+                    Guardrail for directional clarity and signal noise.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <MiniStat
+                      label="Signal score"
+                      value={`${decision.marketQuality.signalQualityScore}/100`}
+                    />
+                    <MiniStat
+                      label="Noise level"
+                      value={`${decision.marketQuality.noiseLevel}/100`}
+                    />
+                    <MiniStat
+                      label="Directional clarity"
+                      value={decision.marketQuality.directionalClarity}
+                    />
+                    <MiniStat
+                      label="Stability"
+                      value={decision.marketQuality.stabilityAssessment}
+                    />
+                    <MiniStat
+                      label="Exchange agreement"
+                      value={`${decision.marketQuality.exchangeAgreementScore}/100`}
+                    />
+                    <MiniStat
+                      label="Stale feeds"
+                      value={`${decision.marketQuality.staleExchangeCount}/${decision.marketQuality.totalExchangeCount}`}
+                    />
                   </div>
-                  <div className="text-sm leading-6 text-foreground">
-                    {marketRegime.explanation}
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                  <Badge
-                    variant="outline"
-                    className={cn(
-                      "border-white/10",
-                      marketRegime.isTransitioning
-                        ? "bg-amber-500/10 text-amber-200"
-                        : marketRegime.regimeClarity === "clear"
+                  <div className="flex flex-wrap gap-2">
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "border-white/10",
+                        decision.marketQuality.signalQualityState === "strong signal"
                           ? "bg-emerald-500/10 text-emerald-200"
-                          : marketRegime.regimeClarity === "mixed"
+                          : decision.marketQuality.signalQualityState === "moderate signal"
                             ? "bg-sky-500/10 text-sky-200"
-                            : "bg-rose-500/10 text-rose-200",
-                    )}
-                  >
-                    {marketRegime.isTransitioning ? "transitioning" : marketRegime.regimeClarity}
-                  </Badge>
-                  {marketRegime.secondaryRegime ? (
-                    <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
-                      secondary: {marketRegime.secondaryRegime}
+                            : decision.marketQuality.signalQualityState === "weak signal"
+                              ? "bg-amber-500/10 text-amber-200"
+                              : "bg-rose-500/10 text-rose-200",
+                      )}
+                    >
+                      {decision.marketQuality.signalQualityState}
                     </Badge>
-                  ) : null}
-                </div>
-
-                {regimeWarnings.length > 0 || marketRegime.warnings.length > 0 ? (
-                  <div className="space-y-2">
-                    {Array.from(new Set([...marketRegime.warnings, ...regimeWarnings])).map((warning) => (
-                      <AlertRow key={warning} tone="warning" text={warning} />
-                    ))}
+                    <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+                      {decision.marketQuality.conflictingSignalCount} conflicts
+                    </Badge>
                   </div>
-                ) : null}
+                  {decision.marketQuality.warning ? (
+                    <div className="flex gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3 py-3 text-sm text-amber-100">
+                      <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                      <div>{decision.marketQuality.warning}</div>
+                    </div>
+                  ) : null}
+                </CardContent>
+              </Card>
 
-                <MarketRegimeTimeline
-                  asOfMs={decision.asOfMs}
-                  currentRegime={marketRegime}
-                  transitions={regimeTransitions}
-                  warnings={Array.from(new Set([...marketRegime.warnings, ...regimeWarnings]))}
-                />
-              </CardContent>
-            </Card>
+              <Card className="border-white/10 bg-[#0c1628]/88">
+                <CardHeader className="pb-3">
+                  <CardTitle>Decision Notes</CardTitle>
+                  <CardDescription>
+                    Compact readout for quick monitoring.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {decision.notes.map((note) => (
+                    <div
+                      key={note}
+                      className="rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-2 text-sm text-muted-foreground"
+                    >
+                      {note}
+                    </div>
+                  ))}
+                  <div className="grid grid-cols-2 gap-3 pt-2">
+                    <MiniStat label="Feed" value={feedLabel(connectionState, isStale)} />
+                    <MiniStat label="Quality" value={feedQuality(decision.dataQuality.tickCount, decision.dataQuality.coverageMinutes)} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <MiniStat label="Last message" value={formatOptionalMs(lastMessageAtMs)} />
+                    <MiniStat label="Heartbeat" value={formatOptionalMs(lastHeartbeatAtMs)} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <MiniStat label="Reconnects" value={String(reconnectAttempt)} />
+                    <MiniStat label="Ticks" value={String(decision.dataQuality.tickCount)} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <MiniStat label="Spread bps" value={formatMetric(decision.spreadBps, "bps")} />
+                    <MiniStat label="Coverage" value={formatCoverage(decision.dataQuality.coverageMinutes)} />
+                  </div>
+                </CardContent>
+              </Card>
 
-            <Card className="border-white/10 bg-[#0c1628]/88">
-              <CardHeader className="pb-3">
-                <CardTitle>Exchange Health</CardTitle>
-                <CardDescription>
-                  Live status and latest quote context per exchange.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {exchangeHealth.map((feed) => (
-                  <ExchangeHealthRow key={feed.exchange} feed={feed} />
-                ))}
-              </CardContent>
-            </Card>
+              <ConfidenceReliabilityPanel signalPerformance={signalPerformance} />
+            </div>
+          </CollapsibleSection>
 
+          <CollapsibleSection
+            title="Journal / research history"
+            description="Snapshot history, forward outcomes, and local export controls."
+          >
             <Card className="border-white/10 bg-[#0c1628]/88">
               <CardHeader className="pb-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -898,7 +951,7 @@ export function BtcDecisionTerminal() {
                               {formatDirectionalReadout(row)}
                             </td>
                             <td className="px-3 py-2 font-mono text-[11px] text-foreground">
-                              {formatCurrency(row.startingPrice, 0)}
+                              {formatCurrency(row.startingPrice, 2)}
                             </td>
                             <td className="px-3 py-2 font-mono text-[11px] text-foreground">
                               {row.confidence}
@@ -926,10 +979,8 @@ export function BtcDecisionTerminal() {
                 </div>
               </CardContent>
             </Card>
-
-            <ConfidenceReliabilityPanel signalPerformance={signalPerformance} />
-          </div>
-        </section>
+          </CollapsibleSection>
+        </div>
 
         <Dialog open={clearDialogOpen} onOpenChange={setClearDialogOpen}>
           <DialogContent>
@@ -968,130 +1019,6 @@ export function BtcDecisionTerminal() {
         </footer>
       </div>
     </main>
-  )
-}
-
-function Sparkline({ ticks }: { ticks: RealtimeBtcTick[] }) {
-  const prices = ticks.map((tick) => tick.price)
-  if (prices.length < 2) {
-    return (
-      <div className="flex h-36 items-center justify-center text-sm text-muted-foreground">
-        Sparkline will appear once live ticks arrive.
-      </div>
-    )
-  }
-
-  const width = 900
-  const height = 180
-  const min = Math.min(...prices)
-  const max = Math.max(...prices)
-  const padding = 12
-  const points = prices.map((price, index) => {
-    const x =
-      prices.length === 1
-        ? width / 2
-        : padding + (index / (prices.length - 1)) * (width - padding * 2)
-    const y =
-      max === min
-        ? height / 2
-        : padding + (1 - (price - min) / (max - min)) * (height - padding * 2)
-    return `${x},${y}`
-  })
-  const last = prices.at(-1) ?? 0
-  const first = prices[0]
-  const positive = last >= first
-
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between text-xs uppercase tracking-[0.2em] text-muted-foreground">
-        <span>Live sparkline</span>
-        <span>{positive ? "positive drift" : "negative drift"}</span>
-      </div>
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-36 w-full overflow-visible">
-        <defs>
-          <linearGradient id="btc-spark-fill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="rgba(245, 158, 11, 0.28)" />
-            <stop offset="100%" stopColor="rgba(245, 158, 11, 0.02)" />
-          </linearGradient>
-          <linearGradient id="btc-spark-line" x1="0" x2="1" y1="0" y2="0">
-            <stop offset="0%" stopColor="rgb(251, 191, 36)" />
-            <stop offset="100%" stopColor="rgb(34, 197, 94)" />
-          </linearGradient>
-        </defs>
-        <polyline
-          fill="none"
-          stroke="url(#btc-spark-line)"
-          strokeWidth="3"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-          points={points.join(" ")}
-        />
-        <polygon
-          fill="url(#btc-spark-fill)"
-          stroke="none"
-          points={`0,${height} ${points.join(" ")} ${width},${height}`}
-        />
-      </svg>
-    </div>
-  )
-}
-
-function AnalyticsPanel({
-  title,
-  description,
-  icon,
-  rows,
-}: {
-  title: string
-  description: string
-  icon: ReactNode
-  rows: [string, string][]
-}) {
-  return (
-    <Card className="border-white/10 bg-[#0c1628]/88">
-      <CardHeader className="pb-3">
-        <div className="flex items-center gap-2">
-          <div className="rounded-xl border border-white/10 bg-white/[0.04] p-2 text-muted-foreground">
-            {icon}
-          </div>
-          <div>
-            <CardTitle>{title}</CardTitle>
-            <CardDescription>{description}</CardDescription>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {rows.map(([label, value]) => (
-          <div
-            key={label}
-            className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-2 text-sm"
-          >
-            <span className="text-muted-foreground">{label}</span>
-            <span className="font-mono text-foreground">{value}</span>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  )
-}
-
-function DecisionChip({
-  label,
-  value,
-  icon,
-}: {
-  label: string
-  value: string
-  icon: ReactNode
-}) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-3">
-      <div className="flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-muted-foreground">
-        <span className="text-muted-foreground">{icon}</span>
-        {label}
-      </div>
-      <div className="mt-2 text-base font-semibold text-foreground">{value}</div>
-    </div>
   )
 }
 
@@ -1147,30 +1074,6 @@ function ExplanationBlock({
   )
 }
 
-function ExplanationList({
-  label,
-  items,
-}: {
-  label: string
-  items: string[]
-}) {
-  return (
-    <div className="space-y-2 rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-3">
-      <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-        {label}
-      </div>
-      <ul className="space-y-2">
-        {items.map((item) => (
-          <li key={item} className="flex gap-2 text-sm leading-6 text-foreground">
-            <span className="mt-2 size-1.5 rounded-full bg-primary/70" />
-            <span>{item}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}
-
 function OutcomeCell({
   outcome,
 }: {
@@ -1220,6 +1123,35 @@ function AlertRow({
   )
 }
 
+function CollapsibleSection({
+  title,
+  description,
+  children,
+}: {
+  title: string
+  description: string
+  children: ReactNode
+}) {
+  return (
+    <details className="rounded-3xl border border-white/10 bg-[#0c1628]/88">
+      <summary className="cursor-pointer list-none px-5 py-4 outline-none transition-colors hover:bg-white/[0.02] focus-visible:bg-white/[0.02] focus-visible:outline-none">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <div className="text-xs uppercase tracking-[0.28em] text-muted-foreground">
+              {title}
+            </div>
+            <div className="mt-1 text-sm text-muted-foreground">{description}</div>
+          </div>
+          <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+            Expand
+          </div>
+        </div>
+      </summary>
+      <div className="border-t border-white/10 p-4">{children}</div>
+    </details>
+  )
+}
+
 function MiniStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-2">
@@ -1228,6 +1160,34 @@ function MiniStat({ label, value }: { label: string; value: string }) {
       </div>
       <div className="mt-1 font-mono text-sm font-medium text-foreground">{value}</div>
     </div>
+  )
+}
+
+function TerminalToken({
+  label,
+  value,
+}: {
+  label: string
+  value: string
+}) {
+  return (
+    <span className="rounded-full border border-white/10 bg-black/25 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-slate-200">
+      {label}: {value}
+    </span>
+  )
+}
+
+function StatusToken({
+  tone,
+  children,
+}: {
+  tone: string
+  children: ReactNode
+}) {
+  return (
+    <span className={cn("rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.18em]", tone)}>
+      {children}
+    </span>
   )
 }
 
@@ -1260,6 +1220,74 @@ function breakoutStatusTone(status: string) {
   }
 
   return "border-white/10 bg-white/[0.03] text-slate-300"
+}
+
+function marketStateTone(state: string) {
+  if (state === "clean") {
+    return "border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
+  }
+
+  if (state === "mixed") {
+    return "border-sky-500/20 bg-sky-500/10 text-sky-200"
+  }
+
+  if (state === "noisy") {
+    return "border-amber-500/20 bg-amber-500/10 text-amber-200"
+  }
+
+  if (state === "unstable") {
+    return "border-rose-500/20 bg-rose-500/10 text-rose-200"
+  }
+
+  return "border-slate-500/20 bg-slate-500/10 text-slate-200"
+}
+
+function suppressionTone(level: string) {
+  if (level === "none") {
+    return "border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
+  }
+
+  if (level === "caution") {
+    return "border-amber-500/20 bg-amber-500/10 text-amber-200"
+  }
+
+  if (level === "suppress directional bias") {
+    return "border-rose-500/20 bg-rose-500/10 text-rose-200"
+  }
+
+  return "border-slate-500/20 bg-slate-500/10 text-slate-200"
+}
+
+function regimeTone(regime: string) {
+  if (regime === "trending up") {
+    return "border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
+  }
+
+  if (regime === "trending down") {
+    return "border-rose-500/20 bg-rose-500/10 text-rose-200"
+  }
+
+  if (regime === "breakout conditions") {
+    return "border-violet-500/20 bg-violet-500/10 text-violet-200"
+  }
+
+  if (regime === "high-volatility expansion") {
+    return "border-amber-500/20 bg-amber-500/10 text-amber-200"
+  }
+
+  if (regime === "low-volatility compression") {
+    return "border-cyan-500/20 bg-cyan-500/10 text-cyan-200"
+  }
+
+  if (regime === "mean-reverting") {
+    return "border-sky-500/20 bg-sky-500/10 text-sky-200"
+  }
+
+  if (regime === "exhaustion conditions") {
+    return "border-orange-500/20 bg-orange-500/10 text-orange-200"
+  }
+
+  return "border-slate-500/20 bg-slate-500/10 text-slate-200"
 }
 
 function MarketRegimeTimeline({
@@ -1465,13 +1493,13 @@ function ExchangeHealthRow({
       <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         <MiniStat
           label="Latest price"
-          value={tick ? formatCurrency(tick.price, 0) : "n/a"}
+          value={tick ? formatCurrency(tick.price, 2) : "n/a"}
         />
         <MiniStat
           label="Bid / ask"
           value={
             tick && tick.bid !== null && tick.ask !== null
-              ? `${formatCurrency(tick.bid, 0)} / ${formatCurrency(tick.ask, 0)}`
+              ? `${formatCurrency(tick.bid, 2)} / ${formatCurrency(tick.ask, 2)}`
               : "n/a"
           }
         />
@@ -1691,7 +1719,12 @@ function formatMetric(value: number | null | undefined, suffix: string) {
   }
 
   const prefix = value > 0 ? "+" : ""
-  const rounded = Math.abs(value) >= 100 ? value.toFixed(0) : value.toFixed(2)
+  const rounded =
+    Math.abs(value) >= 100
+      ? value.toFixed(0)
+      : Math.abs(value) < 1
+        ? value.toFixed(4)
+        : value.toFixed(2)
   return `${prefix}${rounded}${suffix ? ` ${suffix}` : ""}`
 }
 
@@ -1763,18 +1796,6 @@ function formatCoverage(value: number | null) {
   return `${value.toFixed(1)}m`
 }
 
-function directionIcon(value: string) {
-  if (value === "bullish") {
-    return <ArrowUpRight className="size-4" />
-  }
-
-  if (value === "bearish") {
-    return <ArrowDownRight className="size-4" />
-  }
-
-  return <CircleSlash2 className="size-4" />
-}
-
 function calculatePriceMove(ticks: RealtimeBtcTick[]) {
   if (ticks.length < 2) {
     return null
@@ -1806,7 +1827,8 @@ function formatSignedCurrency(value: number) {
     return "n/a"
   }
 
-  return `${value >= 0 ? "+" : ""}${formatCurrency(value, 0)}`
+  const digits = Math.abs(value) < 1 ? 4 : 2
+  return `${value >= 0 ? "+" : ""}${formatCurrency(value, digits)}`
 }
 
 function formatSignedPercent(value: number) {
@@ -1814,7 +1836,21 @@ function formatSignedPercent(value: number) {
     return "n/a"
   }
 
-  return `${value >= 0 ? "+" : ""}${formatPercent(value, 2)}`
+  const digits = Math.abs(value) < 1 ? 4 : 2
+  return `${value >= 0 ? "+" : ""}${formatPercent(value, digits)}`
+}
+
+function formatSignedPercentValue(value: number) {
+  return formatSignedPercent(value)
+}
+
+function formatPercentOrNA(value: number | null, digits = 2) {
+  if (value === null || Number.isNaN(value)) {
+    return "n/a"
+  }
+
+  const precision = Math.abs(value) < 1 ? Math.max(digits, 4) : digits
+  return `${value >= 0 ? "+" : ""}${formatPercent(value, precision)}`
 }
 
 function exportJournalFile(

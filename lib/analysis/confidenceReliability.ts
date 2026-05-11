@@ -4,6 +4,10 @@ import type {
   BtcJournalRow,
 } from "@/lib/btc/journal-types"
 import type { BtcSignalSuppressionLevel } from "@/lib/analysis/signalSuppression"
+import type {
+  BtcMarketInterpretability,
+  BtcMarketStateLabel,
+} from "@/lib/analysis/marketState"
 
 export type ConfidenceBucketLabel =
   | "0-40%"
@@ -36,9 +40,11 @@ export interface ConfidenceReliabilityDiagnostics {
   totalResolvedCount: number
   qualifiedResolvedCount: number
   regimeQualifiedResolvedCount: number
+  marketStateQualifiedResolvedCount: number
   suppressionQualifiedResolvedCount: number
   excludedLowQualityCount: number
   excludedLowRegimeCount: number
+  excludedLowStateCount: number
   excludedSuppressedCount: number
   sampleSizeWarning: string | null
   summary: {
@@ -70,6 +76,9 @@ interface ConfidenceObservation {
   signalQualityScore: number
   regimeConfidenceScore: number
   regimeStabilityScore: number
+  marketStateInterpretabilityScore: number
+  marketStateLabel: BtcMarketStateLabel
+  marketStateInterpretability: BtcMarketInterpretability
   suppressionLevel: BtcSignalSuppressionLevel
   breakoutDirection: "up" | "down" | "none"
   breakoutStatus: string
@@ -111,6 +120,11 @@ export function buildConfidenceReliabilityDiagnostics(
       observation.regimeConfidenceScore >= 55 &&
       observation.regimeStabilityScore >= 45,
   )
+  const marketStateQualifiedObservations = observations.filter(
+    (observation) =>
+      observation.marketStateLabel !== "unavailable" &&
+      observation.marketStateInterpretabilityScore >= 55,
+  )
   const suppressionQualifiedObservations = observations.filter(
     (observation) =>
       observation.suppressionLevel === "none" ||
@@ -121,18 +135,22 @@ export function buildConfidenceReliabilityDiagnostics(
       ? suppressionQualifiedObservations
       : regimeQualifiedObservations.length > 0
       ? regimeQualifiedObservations
+      : marketStateQualifiedObservations.length > 0
+      ? marketStateQualifiedObservations
       : qualifiedObservations.length > 0
         ? qualifiedObservations
         : observations
   const qualifiedResolvedCount = qualifiedObservations.length
   const regimeQualifiedResolvedCount = regimeQualifiedObservations.length
+  const marketStateQualifiedResolvedCount = marketStateQualifiedObservations.length
   const suppressionQualifiedResolvedCount = suppressionQualifiedObservations.length
   const excludedLowQualityCount = totalResolvedCount - qualifiedResolvedCount
   const excludedLowRegimeCount = totalResolvedCount - regimeQualifiedResolvedCount
+  const excludedLowStateCount = totalResolvedCount - marketStateQualifiedResolvedCount
   const excludedSuppressedCount = totalResolvedCount - suppressionQualifiedResolvedCount
   const sampleSizeWarning =
-    suppressionQualifiedResolvedCount < MIN_SAMPLE_WARNING_COUNT
-      ? `Sample size is small for ${selectedWindow} (${suppressionQualifiedResolvedCount} suppression-qualified resolved outcomes, ${regimeQualifiedResolvedCount} regime-qualified, ${qualifiedResolvedCount} signal-quality-qualified). Treat calibration and threshold results as directional only.`
+    marketStateQualifiedResolvedCount < MIN_SAMPLE_WARNING_COUNT
+      ? `Sample size is small for ${selectedWindow} (${marketStateQualifiedResolvedCount} market-state-qualified resolved outcomes, ${suppressionQualifiedResolvedCount} suppression-qualified, ${regimeQualifiedResolvedCount} regime-qualified, ${qualifiedResolvedCount} signal-quality-qualified). Treat calibration and threshold results as directional only.`
       : null
 
   const buckets = CONFIDENCE_BUCKETS.map((bucket) =>
@@ -154,9 +172,11 @@ export function buildConfidenceReliabilityDiagnostics(
     totalResolvedCount,
     qualifiedResolvedCount,
     regimeQualifiedResolvedCount,
+    marketStateQualifiedResolvedCount,
     suppressionQualifiedResolvedCount,
     excludedLowQualityCount,
     excludedLowRegimeCount,
+    excludedLowStateCount,
     excludedSuppressedCount,
     sampleSizeWarning,
     summary: {
@@ -193,6 +213,9 @@ function flattenResolvedObservations(
           row.marketQuality?.signalQualityScore ?? row.confidence,
           row.marketRegime?.regimeConfidence ?? row.confidence,
           row.marketRegime?.regimeStabilityScore ?? row.confidence,
+          row.marketState?.signalInterpretabilityScore ?? row.marketQuality?.signalQualityScore ?? row.confidence,
+          row.marketState?.state ?? "mixed",
+          row.marketState?.interpretability ?? "medium",
           row.signalSuppression?.level ?? "none",
           row.falseBreakout?.breakoutDirection ?? "none",
           row.falseBreakout?.breakoutStatus ?? "no breakout",
@@ -212,6 +235,9 @@ function toObservation(
   signalQualityScore: number,
   regimeConfidenceScore: number,
   regimeStabilityScore: number,
+  marketStateInterpretabilityScore: number,
+  marketStateLabel: BtcMarketStateLabel,
+  marketStateInterpretability: BtcMarketInterpretability,
   suppressionLevel: BtcSignalSuppressionLevel,
   breakoutDirection: "up" | "down" | "none",
   breakoutStatus: string,
@@ -225,6 +251,9 @@ function toObservation(
     signalQualityScore,
     regimeConfidenceScore,
     regimeStabilityScore,
+    marketStateInterpretabilityScore,
+    marketStateLabel,
+    marketStateInterpretability,
     suppressionLevel,
     breakoutDirection,
     breakoutStatus,

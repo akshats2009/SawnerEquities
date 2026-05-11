@@ -482,6 +482,7 @@ function recordBiasSnapshot({
       startingPrice,
       bias: decision.directionBias,
       marketQuality: decision.marketQuality,
+      marketState: decision.marketState,
       marketRegime: decision.marketRegime,
       falseBreakout: decision.falseBreakout,
       signalSuppression: suppression,

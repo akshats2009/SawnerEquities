@@ -1,5 +1,6 @@
 import type { BtcDecisionExplanation, BtcDirectionBias, BtcObservationWindow } from "@/lib/analysis/priceDecision"
 import type { BtcMarketQualitySnapshot } from "@/lib/analysis/priceDecision"
+import type { BtcMarketStateSnapshot } from "@/lib/analysis/marketState"
 import type { BtcFalseBreakoutSnapshot } from "@/lib/analysis/falseBreakout"
 import type { BtcMarketRegimeSnapshot } from "@/lib/analysis/regimeDetection"
 import type { BtcSignalSuppressionSnapshot } from "@/lib/analysis/signalSuppression"
@@ -24,6 +25,7 @@ export interface BtcJournalSnapshot {
   startingPrice: number
   bias: BtcDirectionBias
   marketQuality?: BtcMarketQualitySnapshot | null
+  marketState?: BtcMarketStateSnapshot | null
   marketRegime?: BtcMarketRegimeSnapshot | null
   falseBreakout?: BtcFalseBreakoutSnapshot | null
   signalSuppression?: BtcSignalSuppressionSnapshot | null
