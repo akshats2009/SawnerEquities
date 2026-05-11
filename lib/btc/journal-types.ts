@@ -1,6 +1,7 @@
 import type { BtcDecisionExplanation, BtcDirectionBias, BtcObservationWindow } from "@/lib/analysis/priceDecision"
 import type { BtcMarketQualitySnapshot } from "@/lib/analysis/priceDecision"
 import type { BtcMarketRegimeSnapshot } from "@/lib/analysis/regimeDetection"
+import type { BtcSignalSuppressionSnapshot } from "@/lib/analysis/signalSuppression"
 import type { MistakeTag } from "@/types"
 
 export type BtcJournalWindow = "1m" | "5m" | "15m" | "1h"
@@ -23,6 +24,7 @@ export interface BtcJournalSnapshot {
   bias: BtcDirectionBias
   marketQuality?: BtcMarketQualitySnapshot | null
   marketRegime?: BtcMarketRegimeSnapshot | null
+  signalSuppression?: BtcSignalSuppressionSnapshot | null
   confidence: number
   observationWindow: BtcObservationWindow
   sourceTickMs: number | null

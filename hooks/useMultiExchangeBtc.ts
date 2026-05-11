@@ -54,6 +54,8 @@ export interface RealtimeBtcState {
   marketRegime: BtcMarketRegimeSnapshot
   regimeTransitions: BtcRegimeTransition[]
   regimeWarnings: string[]
+  signalSuppressionOverrideEnabled: boolean
+  setSignalSuppressionOverrideEnabled: (enabled: boolean) => void
   clearJournal: () => void
 }
 
@@ -91,12 +93,15 @@ export function useMultiExchangeBtc(productId = "BTC-USD"): RealtimeBtcState {
   )
   const [regimeTransitions, setRegimeTransitions] = useState<BtcRegimeTransition[]>([])
   const [regimeWarnings, setRegimeWarnings] = useState<string[]>([])
+  const [signalSuppressionOverrideEnabled, setSignalSuppressionOverrideEnabled] =
+    useState(false)
   const [nowMs, setNowMs] = useState(() => Date.now())
 
   const exchangeFeedsRef = useRef(exchangeFeeds)
   const latestConsensusTickRef = useRef<RealtimeBtcTick | null>(null)
   const consensusSequenceRef = useRef(0)
   const decisionRef = useRef<BtcDecisionSnapshot | null>(null)
+  const signalSuppressionOverrideRef = useRef(signalSuppressionOverrideEnabled)
 
   useEffect(() => {
     exchangeFeedsRef.current = exchangeFeeds
@@ -150,6 +155,10 @@ export function useMultiExchangeBtc(productId = "BTC-USD"): RealtimeBtcState {
   useEffect(() => {
     decisionRef.current = decision
   }, [decision])
+
+  useEffect(() => {
+    signalSuppressionOverrideRef.current = signalSuppressionOverrideEnabled
+  }, [signalSuppressionOverrideEnabled])
 
   useEffect(() => {
     const regime = decision.marketRegime
@@ -239,11 +248,14 @@ export function useMultiExchangeBtc(productId = "BTC-USD"): RealtimeBtcState {
     marketRegime: decision.marketRegime,
     regimeTransitions,
     regimeWarnings,
+    signalSuppressionOverrideEnabled,
+    setSignalSuppressionOverrideEnabled,
     clearJournal: () => {
       clearBtcJournalEntries()
       setBiasSnapshots([])
       setRegimeTransitions([])
       setRegimeWarnings([])
+      setSignalSuppressionOverrideEnabled(false)
     },
   }
 
@@ -307,6 +319,7 @@ export function useMultiExchangeBtc(productId = "BTC-USD"): RealtimeBtcState {
         decision: decisionSnapshot,
         receivedAtMs: nextConsensusTick.receivedAtMs,
         setBiasSnapshots,
+        allowSuppressedSnapshots: signalSuppressionOverrideRef.current,
       })
     }
   }
@@ -416,10 +429,12 @@ function recordBiasSnapshot({
   decision,
   receivedAtMs,
   setBiasSnapshots,
+  allowSuppressedSnapshots,
 }: {
   decision: BtcDecisionSnapshot | null
   receivedAtMs: number
   setBiasSnapshots: Dispatch<SetStateAction<BtcJournalSnapshot[]>>
+  allowSuppressedSnapshots: boolean
 }) {
   if (
     decision === null ||
@@ -432,6 +447,7 @@ function recordBiasSnapshot({
 
   const startingPrice = decision.lastPrice
   const sourceTickMs = decision.latestTickMs
+  const suppression = decision.signalSuppression
 
   setBiasSnapshots((current) => {
     const lastSnapshot = current.at(-1)
@@ -444,18 +460,23 @@ function recordBiasSnapshot({
       return current
     }
 
-      const nextSnapshot: BtcJournalSnapshot = {
-        id: `${sourceTickMs}-${decision.directionBias}-${current.length}`,
-        timestampMs: receivedAtMs,
-        startingPrice,
-        bias: decision.directionBias,
-        marketQuality: decision.marketQuality,
-        marketRegime: decision.marketRegime,
-        confidence: decision.confidenceScore,
-        observationWindow: decision.observationWindow,
-        sourceTickMs,
-        explanation: decision.explanation,
-      }
+    if (suppression.shouldSuppressSnapshot && !allowSuppressedSnapshots) {
+      return current
+    }
+
+    const nextSnapshot: BtcJournalSnapshot = {
+      id: `${sourceTickMs}-${decision.directionBias}-${current.length}`,
+      timestampMs: receivedAtMs,
+      startingPrice,
+      bias: decision.directionBias,
+      marketQuality: decision.marketQuality,
+      marketRegime: decision.marketRegime,
+      signalSuppression: suppression,
+      confidence: decision.confidenceScore,
+      observationWindow: decision.observationWindow,
+      sourceTickMs,
+      explanation: decision.explanation,
+    }
 
     const next = [...current, nextSnapshot]
     return next.slice(-MAX_BIAS_SNAPSHOTS)

@@ -3,6 +3,7 @@ import type {
   BtcJournalOutcome,
   BtcJournalRow,
 } from "@/lib/btc/journal-types"
+import type { BtcSignalSuppressionLevel } from "@/lib/analysis/signalSuppression"
 
 export type ConfidenceBucketLabel =
   | "0-40%"
@@ -35,8 +36,10 @@ export interface ConfidenceReliabilityDiagnostics {
   totalResolvedCount: number
   qualifiedResolvedCount: number
   regimeQualifiedResolvedCount: number
+  suppressionQualifiedResolvedCount: number
   excludedLowQualityCount: number
   excludedLowRegimeCount: number
+  excludedSuppressedCount: number
   sampleSizeWarning: string | null
   summary: {
     hitRate: number | null
@@ -56,6 +59,7 @@ interface ConfidenceObservation {
   signalQualityScore: number
   regimeConfidenceScore: number
   regimeStabilityScore: number
+  suppressionLevel: BtcSignalSuppressionLevel
 }
 
 const CONFIDENCE_BUCKETS: Array<{
@@ -93,19 +97,28 @@ export function buildConfidenceReliabilityDiagnostics(
       observation.regimeConfidenceScore >= 55 &&
       observation.regimeStabilityScore >= 45,
   )
+  const suppressionQualifiedObservations = observations.filter(
+    (observation) =>
+      observation.suppressionLevel === "none" ||
+      observation.suppressionLevel === "caution",
+  )
   const effectiveObservations =
-    regimeQualifiedObservations.length > 0
+    suppressionQualifiedObservations.length > 0
+      ? suppressionQualifiedObservations
+      : regimeQualifiedObservations.length > 0
       ? regimeQualifiedObservations
       : qualifiedObservations.length > 0
         ? qualifiedObservations
         : observations
   const qualifiedResolvedCount = qualifiedObservations.length
   const regimeQualifiedResolvedCount = regimeQualifiedObservations.length
+  const suppressionQualifiedResolvedCount = suppressionQualifiedObservations.length
   const excludedLowQualityCount = totalResolvedCount - qualifiedResolvedCount
   const excludedLowRegimeCount = totalResolvedCount - regimeQualifiedResolvedCount
+  const excludedSuppressedCount = totalResolvedCount - suppressionQualifiedResolvedCount
   const sampleSizeWarning =
-    regimeQualifiedResolvedCount < MIN_SAMPLE_WARNING_COUNT
-      ? `Sample size is small for ${selectedWindow} (${regimeQualifiedResolvedCount} regime-qualified resolved outcomes, ${qualifiedResolvedCount} signal-quality-qualified). Treat calibration and threshold results as directional only.`
+    suppressionQualifiedResolvedCount < MIN_SAMPLE_WARNING_COUNT
+      ? `Sample size is small for ${selectedWindow} (${suppressionQualifiedResolvedCount} suppression-qualified resolved outcomes, ${regimeQualifiedResolvedCount} regime-qualified, ${qualifiedResolvedCount} signal-quality-qualified). Treat calibration and threshold results as directional only.`
       : null
 
   const buckets = CONFIDENCE_BUCKETS.map((bucket) =>
@@ -126,8 +139,10 @@ export function buildConfidenceReliabilityDiagnostics(
     totalResolvedCount,
     qualifiedResolvedCount,
     regimeQualifiedResolvedCount,
+    suppressionQualifiedResolvedCount,
     excludedLowQualityCount,
     excludedLowRegimeCount,
+    excludedSuppressedCount,
     sampleSizeWarning,
     summary: {
       hitRate: buildHitRate(effectiveObservations),
@@ -162,6 +177,7 @@ function flattenResolvedObservations(
           row.marketQuality?.signalQualityScore ?? row.confidence,
           row.marketRegime?.regimeConfidence ?? row.confidence,
           row.marketRegime?.regimeStabilityScore ?? row.confidence,
+          row.signalSuppression?.level ?? "none",
         ),
       )
     }
@@ -177,6 +193,7 @@ function toObservation(
   signalQualityScore: number,
   regimeConfidenceScore: number,
   regimeStabilityScore: number,
+  suppressionLevel: BtcSignalSuppressionLevel,
 ): ConfidenceObservation {
   return {
     confidence,
@@ -186,6 +203,7 @@ function toObservation(
     signalQualityScore,
     regimeConfidenceScore,
     regimeStabilityScore,
+    suppressionLevel,
   }
 }
 

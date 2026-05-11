@@ -62,6 +62,8 @@ export function BtcDecisionTerminal() {
     marketRegime,
     regimeTransitions,
     regimeWarnings,
+    signalSuppressionOverrideEnabled,
+    setSignalSuppressionOverrideEnabled,
     clearJournal,
   } = useRealtimeBtc()
   const [clearDialogOpen, setClearDialogOpen] = useState(false)
@@ -522,6 +524,89 @@ export function BtcDecisionTerminal() {
                     <div>{decision.marketQuality.warning}</div>
                   </div>
                 ) : null}
+              </CardContent>
+            </Card>
+
+            <Card className="border-white/10 bg-[#0c1628]/88">
+              <CardHeader className="pb-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <CardTitle>Signal Suppression</CardTitle>
+                    <CardDescription>
+                      Stops weak, stale, or contradictory conditions from being shown as confident directional pressure.
+                    </CardDescription>
+                  </div>
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "border-white/10",
+                      decision.signalSuppression.level === "none"
+                        ? "bg-emerald-500/10 text-emerald-200"
+                        : decision.signalSuppression.level === "caution"
+                          ? "bg-amber-500/10 text-amber-200"
+                          : decision.signalSuppression.level === "suppress directional bias"
+                            ? "bg-rose-500/10 text-rose-200"
+                            : "bg-slate-500/10 text-slate-200",
+                    )}
+                  >
+                    {decision.signalSuppression.level}
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <MiniStat label="Display readout" value={decision.signalSuppression.directionalReadout} />
+                  <MiniStat label="Confidence penalty" value={`-${decision.signalSuppression.confidencePenalty}`} />
+                  <MiniStat
+                    label="Snapshot guard"
+                    value={decision.signalSuppression.shouldSuppressSnapshot ? "blocked" : "open"}
+                  />
+                  <MiniStat
+                    label="Override"
+                    value={signalSuppressionOverrideEnabled ? "enabled" : "disabled"}
+                  />
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {decision.signalSuppression.reasons.map((reason) => (
+                    <Badge
+                      key={reason}
+                      variant="outline"
+                      className="border-white/10 bg-white/[0.03] text-slate-300"
+                    >
+                      {reason}
+                    </Badge>
+                  ))}
+                </div>
+
+                {decision.signalSuppression.warning ? (
+                  <div className="flex gap-3 rounded-2xl border border-rose-500/20 bg-rose-500/10 px-3 py-3 text-sm text-rose-100">
+                    <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                    <div>{decision.signalSuppression.warning}</div>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-3 text-sm text-muted-foreground">
+                    No suppression is active. Directional language is allowed by the current market state.
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={signalSuppressionOverrideEnabled ? "destructive" : "outline"}
+                    className="border-white/10"
+                    onClick={() =>
+                      setSignalSuppressionOverrideEnabled(!signalSuppressionOverrideEnabled)
+                    }
+                    disabled={!decision.signalSuppression.shouldSuppressSnapshot && !signalSuppressionOverrideEnabled}
+                  >
+                    {signalSuppressionOverrideEnabled ? "Disable suppressed snapshot override" : "Allow suppressed snapshots"}
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    Override is local only and should be used only when you want to record suppressed states for research.
+                  </span>
+                </div>
               </CardContent>
             </Card>
 

@@ -53,6 +53,9 @@ export function ConfidenceReliabilityPanel({
             <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
               {diagnostics.regimeQualifiedResolvedCount} regime-qualified
             </Badge>
+            <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+              {diagnostics.suppressionQualifiedResolvedCount} suppression-qualified
+            </Badge>
           </div>
         </div>
       </CardHeader>
@@ -88,6 +91,12 @@ export function ConfidenceReliabilityPanel({
         {diagnostics.excludedLowRegimeCount > 0 ? (
           <div className="rounded-2xl border border-violet-500/20 bg-violet-500/10 px-3 py-3 text-sm text-violet-100">
             {diagnostics.excludedLowRegimeCount} resolved outcomes were below the regime-quality cutoff and were excluded from calibration.
+          </div>
+        ) : null}
+
+        {diagnostics.excludedSuppressedCount > 0 ? (
+          <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 px-3 py-3 text-sm text-rose-100">
+            {diagnostics.excludedSuppressedCount} resolved outcomes were suppressed and were excluded from calibration unless override was enabled.
           </div>
         ) : null}
 
