@@ -49,6 +49,17 @@ export interface ConfidenceReliabilityDiagnostics {
   }
   buckets: ConfidenceBucketDiagnostics[]
   thresholds: ConfidenceThresholdDiagnostics[]
+  breakout: BreakoutReliabilityDiagnostics
+}
+
+export interface BreakoutReliabilityDiagnostics {
+  breakoutResolvedCount: number
+  breakoutHitRate: number | null
+  nonBreakoutResolvedCount: number
+  nonBreakoutHitRate: number | null
+  falseBreakoutWarningCount: number
+  falseBreakoutWarningReversalRate: number | null
+  repeatedFakeoutCount: number
 }
 
 interface ConfidenceObservation {
@@ -60,6 +71,9 @@ interface ConfidenceObservation {
   regimeConfidenceScore: number
   regimeStabilityScore: number
   suppressionLevel: BtcSignalSuppressionLevel
+  breakoutDirection: "up" | "down" | "none"
+  breakoutStatus: string
+  falseBreakoutRisk: number
 }
 
 const CONFIDENCE_BUCKETS: Array<{
@@ -133,6 +147,7 @@ export function buildConfidenceReliabilityDiagnostics(
   const thresholds = CONFIDENCE_THRESHOLDS.map((threshold) =>
     buildThresholdDiagnostics(threshold, effectiveObservations),
   )
+  const breakout = buildBreakoutReliabilityDiagnostics(observations)
 
   return {
     selectedWindow,
@@ -152,6 +167,7 @@ export function buildConfidenceReliabilityDiagnostics(
     },
     buckets,
     thresholds,
+    breakout,
   }
 }
 
@@ -178,6 +194,9 @@ function flattenResolvedObservations(
           row.marketRegime?.regimeConfidence ?? row.confidence,
           row.marketRegime?.regimeStabilityScore ?? row.confidence,
           row.signalSuppression?.level ?? "none",
+          row.falseBreakout?.breakoutDirection ?? "none",
+          row.falseBreakout?.breakoutStatus ?? "no breakout",
+          row.falseBreakout?.falseBreakoutRisk ?? 0,
         ),
       )
     }
@@ -194,6 +213,9 @@ function toObservation(
   regimeConfidenceScore: number,
   regimeStabilityScore: number,
   suppressionLevel: BtcSignalSuppressionLevel,
+  breakoutDirection: "up" | "down" | "none",
+  breakoutStatus: string,
+  falseBreakoutRisk: number,
 ): ConfidenceObservation {
   return {
     confidence,
@@ -204,6 +226,9 @@ function toObservation(
     regimeConfidenceScore,
     regimeStabilityScore,
     suppressionLevel,
+    breakoutDirection,
+    breakoutStatus,
+    falseBreakoutRisk,
   }
 }
 
@@ -244,6 +269,34 @@ function buildThresholdDiagnostics(
   }
 }
 
+function buildBreakoutReliabilityDiagnostics(
+  observations: ConfidenceObservation[],
+): BreakoutReliabilityDiagnostics {
+  const breakoutObservations = observations.filter(
+    (observation) => observation.breakoutDirection !== "none",
+  )
+  const nonBreakoutObservations = observations.filter(
+    (observation) => observation.breakoutDirection === "none",
+  )
+  const falseBreakoutWarningObservations = breakoutObservations.filter(
+    (observation) =>
+      observation.falseBreakoutRisk >= 70 ||
+      observation.breakoutStatus === "false breakout risk",
+  )
+
+  return {
+    breakoutResolvedCount: breakoutObservations.length,
+    breakoutHitRate: buildHitRate(breakoutObservations),
+    nonBreakoutResolvedCount: nonBreakoutObservations.length,
+    nonBreakoutHitRate: buildHitRate(nonBreakoutObservations),
+    falseBreakoutWarningCount: falseBreakoutWarningObservations.length,
+    falseBreakoutWarningReversalRate: buildFalseBreakoutWarningReversalRate(
+      falseBreakoutWarningObservations,
+    ),
+    repeatedFakeoutCount: Math.max(0, falseBreakoutWarningObservations.length - 1),
+  }
+}
+
 function buildHitRate(observations: ConfidenceObservation[]) {
   if (observations.length === 0) {
     return null
@@ -266,6 +319,31 @@ function buildDirectionalHitRate(
   const correct = filtered.filter((observation) => observation.directionallyCorrect)
     .length
   return correct / filtered.length
+}
+
+function buildFalseBreakoutWarningReversalRate(
+  observations: ConfidenceObservation[],
+) {
+  if (observations.length === 0) {
+    return null
+  }
+
+  const reversals = observations.filter((observation) =>
+    didReverseBreakout(observation.breakoutDirection, observation.percentChange),
+  ).length
+
+  return reversals / observations.length
+}
+
+function didReverseBreakout(
+  breakoutDirection: "up" | "down" | "none",
+  percentChange: number,
+) {
+  if (breakoutDirection === "none" || percentChange === 0) {
+    return false
+  }
+
+  return breakoutDirection === "up" ? percentChange < 0 : percentChange > 0
 }
 
 function buildAveragePercentMove(observations: ConfidenceObservation[]) {

@@ -62,6 +62,7 @@ export function BtcDecisionTerminal() {
     marketRegime,
     regimeTransitions,
     regimeWarnings,
+    breakoutHistory,
     signalSuppressionOverrideEnabled,
     setSignalSuppressionOverrideEnabled,
     clearJournal,
@@ -642,6 +643,101 @@ export function BtcDecisionTerminal() {
             </Card>
 
             <Card className="border-white/10 bg-[#0c1628]/88">
+              <CardHeader className="pb-2">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <CardTitle>Breakout Intelligence</CardTitle>
+                    <CardDescription>
+                      Checks whether a breakout is actually building follow-through or starting to fail.
+                    </CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-3">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-2 font-mono text-[11px] uppercase tracking-[0.22em] text-slate-200">
+                    <span className={cn(
+                      "rounded border px-2 py-1",
+                      breakoutStatusTone(decision.falseBreakout.breakoutStatus),
+                    )}>
+                      STATUS: {decision.falseBreakout.breakoutStatus}
+                    </span>
+                    <span className="text-white/30">|</span>
+                    <span className="rounded border border-white/10 bg-white/[0.03] px-2 py-1">
+                      DIR: {breakoutDirectionReadout(decision.falseBreakout.breakoutDirection)}
+                    </span>
+                    <span className="text-white/30">|</span>
+                    <span className="rounded border border-white/10 bg-white/[0.03] px-2 py-1">
+                      RISK: {decision.falseBreakout.falseBreakoutRisk}/100
+                    </span>
+                    <span className="text-white/30">|</span>
+                    <span className="rounded border border-white/10 bg-white/[0.03] px-2 py-1">
+                      FOLLOW: {decision.falseBreakout.followThroughQuality}/100
+                    </span>
+                    <span className="text-white/30">|</span>
+                    <span className="rounded border border-white/10 bg-white/[0.03] px-2 py-1">
+                      HEALTH: {decision.falseBreakout.breakoutHealthScore}/100
+                    </span>
+                    <span className="text-white/30">|</span>
+                    <span className="rounded border border-white/10 bg-white/[0.03] px-2 py-1">
+                      EXH: {decision.falseBreakout.exhaustionScore}/100
+                    </span>
+                    <span className="text-white/30">|</span>
+                    <span className="rounded border border-white/10 bg-white/[0.03] px-2 py-1">
+                      HISTORY: {breakoutHistory.length}
+                    </span>
+                  </div>
+
+                  <details className="mt-3">
+                    <summary className="cursor-pointer list-none text-xs uppercase tracking-[0.22em] text-muted-foreground outline-none transition-colors hover:text-slate-200 focus-visible:text-slate-200 focus-visible:outline-none">
+                      Expand breakout details
+                    </summary>
+                    <div className="mt-3 space-y-3">
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                        <MiniStat label="Direction" value={breakoutDirectionReadout(decision.falseBreakout.breakoutDirection)} />
+                        <MiniStat label="Confidence" value={`${decision.falseBreakout.breakoutConfidence}/100`} />
+                        <MiniStat label="Risk" value={`${decision.falseBreakout.falseBreakoutRisk}/100`} />
+                        <MiniStat label="Health" value={`${decision.falseBreakout.breakoutHealthScore}/100`} />
+                      </div>
+
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <MiniStat label="Follow-through" value={`${decision.falseBreakout.followThroughQuality}/100`} />
+                        <MiniStat label="Exhaustion" value={`${decision.falseBreakout.exhaustionScore}/100`} />
+                      </div>
+
+                      <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-3 text-sm leading-6 text-foreground">
+                        {decision.falseBreakout.explanation}
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        {decision.falseBreakout.supportingSignals.map((signal) => (
+                          <Badge key={signal} variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+                            {signal}
+                          </Badge>
+                        ))}
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        {decision.falseBreakout.conflictingSignals.map((signal) => (
+                          <Badge key={signal} variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+                            {signal}
+                          </Badge>
+                        ))}
+                      </div>
+
+                      {decision.falseBreakout.warning ? (
+                        <div className="flex gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3 py-3 text-sm text-amber-100">
+                          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                          <div>{decision.falseBreakout.warning}</div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </details>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border-white/10 bg-[#0c1628]/88">
               <CardHeader className="pb-3">
                 <CardTitle>Market Regime</CardTitle>
                 <CardDescription>
@@ -1133,6 +1229,37 @@ function MiniStat({ label, value }: { label: string; value: string }) {
       <div className="mt-1 font-mono text-sm font-medium text-foreground">{value}</div>
     </div>
   )
+}
+
+function breakoutDirectionReadout(direction: string) {
+  switch (direction) {
+    case "up":
+      return "upward"
+    case "down":
+      return "downward"
+    default:
+      return "none"
+  }
+}
+
+function breakoutStatusTone(status: string) {
+  if (status === "confirmed breakout") {
+    return "border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
+  }
+
+  if (status === "breakout developing") {
+    return "border-sky-500/20 bg-sky-500/10 text-sky-200"
+  }
+
+  if (status === "false breakout risk") {
+    return "border-rose-500/20 bg-rose-500/10 text-rose-200"
+  }
+
+  if (status === "ambiguous") {
+    return "border-amber-500/20 bg-amber-500/10 text-amber-200"
+  }
+
+  return "border-white/10 bg-white/[0.03] text-slate-300"
 }
 
 function MarketRegimeTimeline({

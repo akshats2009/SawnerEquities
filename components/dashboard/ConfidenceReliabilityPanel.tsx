@@ -122,6 +122,30 @@ export function ConfidenceReliabilityPanel({
           />
         </div>
 
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <SummaryStat
+            label="Breakout hit"
+            value={formatRate(diagnostics.breakout.breakoutHitRate)}
+          />
+          <SummaryStat
+            label="Non-breakout hit"
+            value={formatRate(diagnostics.breakout.nonBreakoutHitRate)}
+          />
+          <SummaryStat
+            label="False breakout warns"
+            value={String(diagnostics.breakout.falseBreakoutWarningCount)}
+          />
+          <SummaryStat
+            label="Warning reversal"
+            value={formatRate(diagnostics.breakout.falseBreakoutWarningReversalRate)}
+          />
+        </div>
+
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-3 text-sm leading-6 text-muted-foreground">
+          Breakout outcomes are compared against non-breakout outcomes, and false-breakout warnings are
+          measured against actual reversal behavior in the selected window.
+        </div>
+
         <div className="overflow-hidden rounded-2xl border border-white/10">
           <table className="min-w-full text-left text-xs">
             <thead className="bg-[#08111f] text-[10px] uppercase tracking-[0.2em] text-muted-foreground">

@@ -7,6 +7,7 @@ import type {
   BtcVolatilityRegime,
   BtcWindowMetrics,
 } from "@/lib/analysis/priceDecision"
+import type { BtcFalseBreakoutSnapshot } from "@/lib/analysis/falseBreakout"
 
 export type BtcMarketRegime =
   | "trending up"
@@ -59,6 +60,7 @@ export interface BtcRegimeInput {
   exchangeConsensus: BtcExchangeConsensusMetrics | null
   windowMetrics: BtcWindowMetrics[]
   stale: boolean
+  falseBreakoutAnalysis?: BtcFalseBreakoutSnapshot | null
 }
 
 interface RegimeScore {
@@ -85,6 +87,7 @@ export function analyzeBtcMarketRegime(
     stabilityScore,
     primaryRegime: primary.regime,
     secondaryRegime: secondary?.regime ?? null,
+    falseBreakoutAnalysis: input.falseBreakoutAnalysis ?? null,
   })
 
   return {
@@ -135,6 +138,31 @@ function deriveRegimeMetrics(input: BtcRegimeInput) {
   const trendStrengthScore = clamp(input.trendPersistenceScore / 100, 0, 1)
   const momentumAlignment = computeMomentumAlignment(input.momentumStatus, input.momentumScore, weightedReturn)
   const directionalBias = Math.sign(weightedReturn)
+  const breakoutConfidenceScore = clamp(
+    (input.falseBreakoutAnalysis?.breakoutConfidence ?? 45) / 100,
+    0,
+    1,
+  )
+  const breakoutHealthScore = clamp(
+    (input.falseBreakoutAnalysis?.breakoutHealthScore ?? 45) / 100,
+    0,
+    1,
+  )
+  const falseBreakoutRiskScore = clamp(
+    (input.falseBreakoutAnalysis?.falseBreakoutRisk ?? 35) / 100,
+    0,
+    1,
+  )
+  const followThroughQualityScore = clamp(
+    (input.falseBreakoutAnalysis?.followThroughQuality ?? 45) / 100,
+    0,
+    1,
+  )
+  const exhaustionScore = clamp(
+    (input.falseBreakoutAnalysis?.exhaustionScore ?? 40) / 100,
+    0,
+    1,
+  )
 
   return {
     shortReturn,
@@ -157,6 +185,11 @@ function deriveRegimeMetrics(input: BtcRegimeInput) {
     trendStrengthScore,
     momentumAlignment,
     directionalBias,
+    breakoutConfidenceScore,
+    breakoutHealthScore,
+    falseBreakoutRiskScore,
+    followThroughQualityScore,
+    exhaustionScore,
   }
 }
 
@@ -223,6 +256,7 @@ function buildRegimeScores(metrics: ReturnType<typeof deriveRegimeMetrics>): Reg
       metrics.spreadStress * 0.18 +
       (1 - metrics.agreementScore) * 0.18 +
       (metrics.volatilityLevel >= 0.3 ? 0.12 : 0.04) +
+      metrics.falseBreakoutRiskScore * 0.12 +
       clamp(Math.abs(metrics.weightedReturn) < 0.06 ? 1 : 0, 0, 1) * 0.08,
     0,
     1,
@@ -235,7 +269,12 @@ function buildRegimeScores(metrics: ReturnType<typeof deriveRegimeMetrics>): Reg
       metrics.momentumAlignment * 0.16 +
       metrics.directionConsistency * 0.14 +
       (metrics.trendStrengthScore > 0.5 ? metrics.trendStrengthScore * 0.1 : 0.02) -
-      (metrics.spreadStress > 0.7 ? 0.05 : 0),
+      (metrics.spreadStress > 0.7 ? 0.05 : 0) +
+      metrics.breakoutConfidenceScore * 0.08 +
+      metrics.breakoutHealthScore * 0.14 +
+      (1 - metrics.falseBreakoutRiskScore) * 0.12 +
+      metrics.followThroughQualityScore * 0.12 -
+      metrics.exhaustionScore * 0.08,
     0,
     1,
   )
@@ -246,7 +285,10 @@ function buildRegimeScores(metrics: ReturnType<typeof deriveRegimeMetrics>): Reg
       metrics.volatilityLevel * 0.18 +
       metrics.spreadStress * 0.14 +
       (1 - metrics.momentumAlignment) * 0.12 +
-      (1 - metrics.directionConsistency) * 0.1,
+      (1 - metrics.directionConsistency) * 0.1 +
+      metrics.falseBreakoutRiskScore * 0.16 +
+      metrics.exhaustionScore * 0.18 +
+      (1 - metrics.followThroughQualityScore) * 0.08,
     0,
     1,
   )
@@ -349,6 +391,7 @@ function buildRegimeWarnings({
   stabilityScore,
   primaryRegime,
   secondaryRegime,
+  falseBreakoutAnalysis,
 }: {
   metrics: ReturnType<typeof deriveRegimeMetrics>
   regimeClarity: BtcRegimeClarity
@@ -356,6 +399,7 @@ function buildRegimeWarnings({
   stabilityScore: number
   primaryRegime: BtcMarketRegime
   secondaryRegime: BtcMarketRegime | null
+  falseBreakoutAnalysis: BtcFalseBreakoutSnapshot | null
 }) {
   const warnings: string[] = []
 
@@ -380,6 +424,18 @@ function buildRegimeWarnings({
 
   if (primaryRegime === "high-volatility expansion" && metrics.spreadStress > 0.7) {
     warnings.push("Spread behavior is abnormal relative to the current regime.")
+  }
+
+  if (falseBreakoutAnalysis?.warning) {
+    warnings.push(falseBreakoutAnalysis.warning)
+  }
+
+  if (falseBreakoutAnalysis?.breakoutStatus === "false breakout risk") {
+    warnings.push("Breakout structure appears fragile and may fail.")
+  }
+
+  if (falseBreakoutAnalysis?.breakoutStatus === "ambiguous") {
+    warnings.push("Breakout conditions are ambiguous.")
   }
 
   return warnings

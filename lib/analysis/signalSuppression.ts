@@ -6,6 +6,7 @@ import type {
   BtcRiskState,
   BtcSpreadState,
 } from "@/lib/analysis/priceDecision"
+import type { BtcFalseBreakoutSnapshot } from "@/lib/analysis/falseBreakout"
 import type { BtcMarketRegimeSnapshot } from "@/lib/analysis/regimeDetection"
 
 export type BtcSignalSuppressionLevel =
@@ -35,6 +36,7 @@ export interface BtcSignalSuppressionInput {
   spreadDeltaPct: number | null
   momentumScore: number
   priceAccelerationBpsPerMin2: number | null
+  falseBreakoutAnalysis?: BtcFalseBreakoutSnapshot | null
 }
 
 export function analyzeBtcSignalSuppression(
@@ -48,6 +50,8 @@ export function analyzeBtcSignalSuppression(
   const staleExchangeCount = input.exchangeConsensus?.staleExchangeCount ?? 0
   const noiseLevel = input.marketQuality.noiseLevel
   const tickConsistencyScore = input.marketQuality.tickConsistencyScore
+  const falseBreakoutRisk = input.falseBreakoutAnalysis?.falseBreakoutRisk ?? 0
+  const breakoutStatus = input.falseBreakoutAnalysis?.breakoutStatus ?? "no breakout"
 
   if (staleExchangeCount > 0 || input.stale) {
     severity += 30
@@ -89,6 +93,16 @@ export function analyzeBtcSignalSuppression(
   if (tickConsistencyScore < 42) {
     severity += 16
     reasons.push("low tick consistency")
+  }
+
+  if (falseBreakoutRisk >= 65 || breakoutStatus === "false breakout risk") {
+    severity += 18
+    reasons.push("breakout failure risk")
+  }
+
+  if (breakoutStatus === "ambiguous") {
+    severity += 10
+    reasons.push("ambiguous breakout conditions")
   }
 
   if (input.riskState === "avoid") {
@@ -156,7 +170,11 @@ function deriveDirectionalReadout(
   }
 
   if (level === "suppress directional bias") {
-    return directionBias === "neutral" ? "unclear" : "directional bias suppressed"
+    return directionBias === "neutral"
+      ? "unclear"
+      : baseReadout === "unclear"
+        ? "directional bias suppressed"
+        : `suppressed ${baseReadout}`
   }
 
   if (level === "caution") {

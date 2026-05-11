@@ -48,6 +48,7 @@ export interface RealtimeBtcState {
   decision: BtcDecisionSnapshot
   latestTick: RealtimeBtcTick | null
   biasSnapshots: BtcJournalSnapshot[]
+  breakoutHistory: BtcJournalSnapshot[]
   signalPerformance: BtcJournalRow[]
   exchangeHealth: BtcExchangeFeedState[]
   priceConsensus: BtcPriceConsensus
@@ -213,6 +214,16 @@ export function useMultiExchangeBtc(productId = "BTC-USD"): RealtimeBtcState {
         })),
     [biasSnapshots, decision.lastPrice, latestTick?.price, nowMs],
   )
+  const breakoutHistory = useMemo(
+    () =>
+      biasSnapshots.filter(
+        (snapshot) =>
+          snapshot.falseBreakout !== null &&
+          snapshot.falseBreakout !== undefined &&
+          snapshot.falseBreakout.breakoutDirection !== "none",
+      ),
+    [biasSnapshots],
+  )
 
   useEffect(() => {
     writeBtcJournalEntries(signalPerformance)
@@ -242,6 +253,7 @@ export function useMultiExchangeBtc(productId = "BTC-USD"): RealtimeBtcState {
     decision,
     latestTick,
     biasSnapshots,
+    breakoutHistory,
     signalPerformance,
     exchangeHealth: exchangeFeedList,
     priceConsensus,
@@ -471,6 +483,7 @@ function recordBiasSnapshot({
       bias: decision.directionBias,
       marketQuality: decision.marketQuality,
       marketRegime: decision.marketRegime,
+      falseBreakout: decision.falseBreakout,
       signalSuppression: suppression,
       confidence: decision.confidenceScore,
       observationWindow: decision.observationWindow,

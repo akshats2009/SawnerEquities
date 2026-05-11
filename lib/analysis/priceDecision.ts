@@ -8,6 +8,10 @@ import {
   type BtcMarketRegimeSnapshot,
 } from "@/lib/analysis/regimeDetection"
 import {
+  analyzeBtcFalseBreakout,
+  type BtcFalseBreakoutSnapshot,
+} from "@/lib/analysis/falseBreakout"
+import {
   analyzeBtcSignalSuppression,
   type BtcSignalSuppressionSnapshot,
 } from "@/lib/analysis/signalSuppression"
@@ -100,6 +104,7 @@ export interface BtcDecisionSnapshot {
   chopState: BtcChopState
   trendPersistenceScore: number
   directionBias: BtcDirectionBias
+  falseBreakout: BtcFalseBreakoutSnapshot
   marketQuality: BtcMarketQualitySnapshot
   marketRegime: BtcMarketRegimeSnapshot
   signalSuppression: BtcSignalSuppressionSnapshot
@@ -222,7 +227,7 @@ export function analyzeBtcPriceDecision(
     trendPersistenceScore,
     momentumStatus,
   })
-  const marketRegime = analyzeBtcMarketRegime({
+  const preliminaryMarketRegime = analyzeBtcMarketRegime({
     asOfMs,
     oneMinuteReturn,
     fiveMinuteReturn,
@@ -240,6 +245,43 @@ export function analyzeBtcPriceDecision(
     windowMetrics,
     stale,
   })
+  const falseBreakout = analyzeBtcFalseBreakout({
+    ticks: sortedTicks,
+    oneMinuteReturn,
+    fiveMinuteReturn,
+    fifteenMinuteReturn,
+    spreadState,
+    spreadBps,
+    spreadDeltaPct: computeSpreadDeltaPct(windowMetrics),
+    trendPersistenceScore,
+    momentumScore,
+    momentumStatus,
+    tickVelocityPerMin,
+    volatilityRegime,
+    exchangeConsensus: options?.exchangeConsensus ?? null,
+    marketRegime: preliminaryMarketRegime,
+    riskState,
+    priceAccelerationBpsPerMin2,
+  })
+  const marketRegime = analyzeBtcMarketRegime({
+    asOfMs,
+    oneMinuteReturn,
+    fiveMinuteReturn,
+    fifteenMinuteReturn,
+    realizedVolatility,
+    spreadState,
+    spreadBps,
+    spreadDeltaPct: computeSpreadDeltaPct(windowMetrics),
+    trendPersistenceScore,
+    momentumScore,
+    momentumStatus,
+    tickVelocityPerMin,
+    volatilityRegime,
+    exchangeConsensus: options?.exchangeConsensus ?? null,
+    windowMetrics,
+    stale,
+    falseBreakoutAnalysis: falseBreakout,
+  })
   const marketQuality = assessMarketQuality({
     stale,
     riskState,
@@ -256,6 +298,7 @@ export function analyzeBtcPriceDecision(
     ticks: sortedTicks,
     exchangeConsensus: options?.exchangeConsensus ?? null,
     marketRegime,
+    falseBreakout,
   })
   const signalSuppression = analyzeBtcSignalSuppression({
     directionBias,
@@ -269,6 +312,7 @@ export function analyzeBtcPriceDecision(
     spreadDeltaPct: computeSpreadDeltaPct(windowMetrics),
     momentumScore,
     priceAccelerationBpsPerMin2,
+    falseBreakoutAnalysis: falseBreakout,
   })
   const resolvedMarketQuality = {
     ...marketQuality,
@@ -296,6 +340,7 @@ export function analyzeBtcPriceDecision(
     fiveMinuteReturn,
     marketRegime,
     signalSuppression,
+    falseBreakout,
   })
   const observationWindow = suggestObservationWindow({
     riskState,
@@ -308,6 +353,7 @@ export function analyzeBtcPriceDecision(
     oneHourReturn,
     marketRegime,
     signalSuppression,
+    falseBreakout,
   })
 
   const alerts = buildAlerts({
@@ -320,6 +366,7 @@ export function analyzeBtcPriceDecision(
     marketQuality,
     marketRegime,
     signalSuppression,
+    falseBreakout,
   })
 
   const explanation = buildDecisionExplanation({
@@ -336,6 +383,7 @@ export function analyzeBtcPriceDecision(
     fiveMinuteReturn,
     priceAccelerationBpsPerMin2,
     suddenMoveDetected,
+    falseBreakout,
   })
 
   const notes = buildNotes({
@@ -346,6 +394,7 @@ export function analyzeBtcPriceDecision(
     marketQuality: resolvedMarketQuality,
     marketRegime,
     signalSuppression,
+    falseBreakout,
   })
 
   return {
@@ -370,6 +419,7 @@ export function analyzeBtcPriceDecision(
     chopState,
     trendPersistenceScore,
     directionBias,
+    falseBreakout,
     marketQuality: resolvedMarketQuality,
     marketRegime,
     signalSuppression,
@@ -821,6 +871,7 @@ function computeConfidenceScore({
   signalQualityScore,
   marketRegime,
   signalSuppression,
+  falseBreakout,
   volatilityRegime,
   spreadBps,
   trendPersistenceScore,
@@ -835,6 +886,7 @@ function computeConfidenceScore({
   signalQualityScore: number
   marketRegime: BtcMarketRegimeSnapshot
   signalSuppression: BtcSignalSuppressionSnapshot
+  falseBreakout: BtcFalseBreakoutSnapshot
   volatilityRegime: BtcVolatilityRegime
   spreadBps: number | null
   trendPersistenceScore: number
@@ -860,6 +912,10 @@ function computeConfidenceScore({
   const regimeSupport = clamp(marketRegime.regimeConfidence / 100, 0, 1)
   const regimeStability = clamp(marketRegime.regimeStabilityScore / 100, 0, 1)
   const regimeAlignment = computeRegimeAlignment(directionBias, marketRegime)
+  const breakoutSupport = clamp(falseBreakout.breakoutHealthScore / 100, 0, 1)
+  const breakoutRiskPenalty = clamp(falseBreakout.falseBreakoutRisk / 100, 0, 0.3)
+  const breakoutExhaustionPenalty = clamp(falseBreakout.exhaustionScore / 100, 0, 0.18)
+  const breakoutFollowThrough = clamp(falseBreakout.followThroughQuality / 100, 0, 1)
   const regimeUncertaintyPenalty =
     marketRegime.regimeClarity === "ambiguous" ? 0.08 : marketRegime.isTransitioning ? 0.05 : 0
   const suppressionPenalty = clamp(signalSuppression.confidencePenalty / 100, 0, 0.3)
@@ -872,6 +928,10 @@ function computeConfidenceScore({
     regimeSupport * 0.08 +
     regimeStability * 0.06 +
     regimeAlignment * 0.08 +
+    breakoutSupport * 0.08 +
+    breakoutFollowThrough * 0.05 -
+    breakoutRiskPenalty -
+    breakoutExhaustionPenalty -
     alignmentBonus -
     suppressionPenalty -
     regimeUncertaintyPenalty -
@@ -894,6 +954,7 @@ function suggestObservationWindow({
   oneHourReturn,
   marketRegime,
   signalSuppression,
+  falseBreakout,
 }: {
   riskState: BtcRiskState
   volatilityRegime: BtcVolatilityRegime
@@ -905,6 +966,7 @@ function suggestObservationWindow({
   oneHourReturn: number | null
   marketRegime: BtcMarketRegimeSnapshot
   signalSuppression: BtcSignalSuppressionSnapshot
+  falseBreakout: BtcFalseBreakoutSnapshot
 }): BtcObservationWindow {
   if (signalSuppression.level === "unavailable") {
     return "1h"
@@ -934,6 +996,10 @@ function suggestObservationWindow({
     marketRegime.primaryRegime === "breakout conditions" ||
     marketRegime.primaryRegime === "high-volatility expansion"
   ) {
+    if (falseBreakout.falseBreakoutRisk >= 65 || falseBreakout.breakoutStatus === "false breakout risk") {
+      return "5m"
+    }
+
     return trendPersistenceScore >= 62 ? "1m" : "5m"
   }
 
@@ -962,6 +1028,7 @@ function buildAlerts({
   marketQuality,
   marketRegime,
   signalSuppression,
+  falseBreakout,
 }: {
   stale: boolean
   suddenMoveDetected: boolean
@@ -972,6 +1039,7 @@ function buildAlerts({
   marketQuality: BtcMarketQualitySnapshot
   marketRegime: BtcMarketRegimeSnapshot
   signalSuppression: BtcSignalSuppressionSnapshot
+  falseBreakout: BtcFalseBreakoutSnapshot
 }) {
   return [
     stale ? "Feed is stale. No fresh tick or heartbeat has arrived within the timeout window." : null,
@@ -986,6 +1054,7 @@ function buildAlerts({
     riskState === "avoid" ? "Risk state is avoid until the feed and regime normalize." : null,
     marketQuality.warning,
     signalSuppression.warning,
+    falseBreakout.warning,
     ...marketRegime.warnings,
   ].filter(Boolean) as string[]
 }
@@ -998,6 +1067,7 @@ function buildNotes({
   marketQuality,
   marketRegime,
   signalSuppression,
+  falseBreakout,
 }: {
   momentumStatus: BtcMomentumStatus
   chopState: BtcChopState
@@ -1006,6 +1076,7 @@ function buildNotes({
   marketQuality: BtcMarketQualitySnapshot
   marketRegime: BtcMarketRegimeSnapshot
   signalSuppression: BtcSignalSuppressionSnapshot
+  falseBreakout: BtcFalseBreakoutSnapshot
 }) {
   return [
     `Direction bias reads ${marketQuality.directionalReadout}.`,
@@ -1015,6 +1086,7 @@ function buildNotes({
     `Signal quality is ${marketQuality.signalQualityState} (${marketQuality.signalQualityScore}/100).`,
     `Regime reads ${marketRegime.primaryRegime} (${marketRegime.regimeConfidence}/100 confidence).`,
     `Signal suppression is ${signalSuppression.level}.`,
+    `Breakout intelligence reads ${falseBreakout.breakoutStatus} (${falseBreakout.falseBreakoutRisk}/100 false-breakout risk).`,
     `Suggested observation window: ${observationWindow}.`,
   ]
 }
@@ -1033,6 +1105,7 @@ function buildDecisionExplanation({
   fiveMinuteReturn,
   priceAccelerationBpsPerMin2,
   suddenMoveDetected,
+  falseBreakout,
 }: {
   directionBias: BtcDirectionBias
   momentumStatus: BtcMomentumStatus
@@ -1047,6 +1120,7 @@ function buildDecisionExplanation({
   fiveMinuteReturn: number | null
   priceAccelerationBpsPerMin2: number | null
   suddenMoveDetected: boolean
+  falseBreakout: BtcFalseBreakoutSnapshot
 }): BtcDecisionExplanation {
   const spreadContext =
     spreadState === "stable"
@@ -1069,6 +1143,7 @@ function buildDecisionExplanation({
       ? "the regime is ambiguous"
       : `the regime reads ${marketRegime.primaryRegime}`
   const suppressionActive = signalSuppression.level !== "none"
+  const breakoutActive = falseBreakout.breakoutDirection !== "none"
   const suppressionText =
     signalSuppression.level === "unavailable"
       ? "Directional pressure is unavailable."
@@ -1077,10 +1152,19 @@ function buildDecisionExplanation({
         : suppressionActive
           ? "Directional pressure is muted."
           : null
+  const breakoutText =
+    breakoutActive && falseBreakout.falseBreakoutRisk >= 65
+      ? "Breakout conditions are fragile and may fail."
+      : breakoutActive && falseBreakout.breakoutStatus === "ambiguous"
+        ? "Breakout conditions are ambiguous."
+        : falseBreakout.breakoutStatus === "confirmed breakout"
+          ? "Breakout follow-through is holding."
+          : null
 
   if (directionBias === "bullish") {
     return {
       primaryReason: suppressionText ??
+        breakoutText ??
         (noisyState
         ? `Directional pressure is unclear while ${spreadContext}.`
         : weakPressure
@@ -1088,6 +1172,9 @@ function buildDecisionExplanation({
           : `1m momentum is strengthening while ${spreadContext}.`),
       supportingSignals: [
         `Tick velocity is ${velocityDirection(oneMinuteReturn)} and momentum reads ${momentumStatus}.`,
+        breakoutActive
+          ? `Breakout intelligence reads ${falseBreakout.breakoutStatus} with ${falseBreakout.breakoutHealthScore}/100 health.`
+          : `Breakout intelligence reads ${falseBreakout.breakoutStatus}.`,
         suppressionActive
           ? `Suppression reasons: ${signalSuppression.reasons.join(", ")}.`
           : weakPressure || noisyState
@@ -1105,11 +1192,16 @@ function buildDecisionExplanation({
         volatilityRegime === "elevated" || volatilityRegime === "extreme"
           ? `The regime is noisy because ${volatilityContext}.`
           : `Short-horizon structure is still mixed because ${chopState}.`,
+        breakoutActive && falseBreakout.falseBreakoutRisk >= 65
+          ? "Breakout failure risk is elevated."
+          : breakoutActive && falseBreakout.exhaustionScore >= 60
+            ? "Breakout exhaustion is starting to build."
+            : null,
         suddenMoveDetected
           ? "A sudden move was just detected, which can distort short-term continuation."
           : `Price acceleration is ${accelerationLabel}.`,
         ...marketRegime.conflictingSignals,
-      ],
+      ].filter(Boolean) as string[],
       invalidationCondition:
         "Price acceleration turns negative, the regime becomes ambiguous, or spread expands sharply.",
       biasChangeCondition:
@@ -1120,6 +1212,7 @@ function buildDecisionExplanation({
   if (directionBias === "bearish") {
     return {
       primaryReason: suppressionText ??
+        breakoutText ??
         (noisyState
         ? `Directional pressure is unclear while ${spreadContext}.`
         : weakPressure
@@ -1127,6 +1220,9 @@ function buildDecisionExplanation({
           : `1m momentum is weakening while ${spreadContext}.`),
       supportingSignals: [
         `Tick velocity is ${velocityDirection(oneMinuteReturn)} and momentum reads ${momentumStatus}.`,
+        breakoutActive
+          ? `Breakout intelligence reads ${falseBreakout.breakoutStatus} with ${falseBreakout.breakoutHealthScore}/100 health.`
+          : `Breakout intelligence reads ${falseBreakout.breakoutStatus}.`,
         suppressionActive
           ? `Suppression reasons: ${signalSuppression.reasons.join(", ")}.`
           : weakPressure || noisyState
@@ -1144,11 +1240,16 @@ function buildDecisionExplanation({
         volatilityRegime === "elevated" || volatilityRegime === "extreme"
           ? `The regime is noisy because ${volatilityContext}.`
           : `Short-horizon structure is still mixed because ${chopState}.`,
+        breakoutActive && falseBreakout.falseBreakoutRisk >= 65
+          ? "Breakout failure risk is elevated."
+          : breakoutActive && falseBreakout.exhaustionScore >= 60
+            ? "Breakout exhaustion is starting to build."
+            : null,
         suddenMoveDetected
           ? "A sudden move was just detected, which can distort short-term continuation."
           : `Price acceleration is ${accelerationLabel}.`,
         ...marketRegime.conflictingSignals,
-      ],
+      ].filter(Boolean) as string[],
       invalidationCondition:
         "Price acceleration turns positive, the regime becomes ambiguous, or spread compresses after the down move.",
       biasChangeCondition:
@@ -1158,6 +1259,7 @@ function buildDecisionExplanation({
 
   return {
     primaryReason: suppressionText ??
+      breakoutText ??
       (noisyState
       ? "Conditions are noisy enough that directional pressure is unclear."
       : "Short-horizon signals are mixed and no persistent directional edge is dominant."),
@@ -1166,6 +1268,7 @@ function buildDecisionExplanation({
       `Trend persistence sits at ${persistenceLabel}.`,
       `The structure is currently ${chopState}.`,
       `Directional readout is ${directionalPressure}.`,
+      `Breakout intelligence reads ${falseBreakout.breakoutStatus} (${falseBreakout.breakoutHealthScore}/100 health).`,
       ...(suppressionActive
         ? [`Suppression reasons: ${signalSuppression.reasons.join(", ")}.`]
         : []),
@@ -1176,8 +1279,13 @@ function buildDecisionExplanation({
       volatilityRegime === "elevated" || volatilityRegime === "extreme"
         ? `Volatility is elevated enough to blur direction because ${volatilityContext}.`
         : "Volatility is not forcing a directional read.",
+      breakoutActive && falseBreakout.falseBreakoutRisk >= 65
+        ? "Breakout failure risk is elevated."
+        : breakoutActive && falseBreakout.exhaustionScore >= 60
+          ? "Breakout exhaustion is starting to build."
+          : null,
       ...marketRegime.conflictingSignals,
-    ],
+    ].filter(Boolean) as string[],
     invalidationCondition:
       "A persistent move builds in one direction with improving persistence, acceleration, and a clearer regime.",
     biasChangeCondition:
@@ -1201,6 +1309,7 @@ function assessMarketQuality({
   ticks,
   exchangeConsensus,
   marketRegime,
+  falseBreakout,
 }: {
   stale: boolean
   riskState: BtcRiskState
@@ -1217,6 +1326,7 @@ function assessMarketQuality({
   ticks: RealtimeBtcTick[]
   exchangeConsensus: BtcExchangeConsensusMetrics | null
   marketRegime: BtcMarketRegimeSnapshot
+  falseBreakout: BtcFalseBreakoutSnapshot
 }): BtcMarketQualitySnapshot {
   const tickConsistencyScore = computeTickConsistencyScore(ticks)
   const volatilityStabilityScore = computeVolatilityStabilityScore(
@@ -1246,6 +1356,7 @@ function assessMarketQuality({
     fiveMinuteReturn,
     exchangeConsensus,
     marketRegime,
+    falseBreakout,
   })
 
   const exchangeAgreementScore = exchangeConsensus?.agreementScore ?? 0
@@ -1265,6 +1376,9 @@ function assessMarketQuality({
       clamp(marketRegime.regimeStabilityScore / 100, 0, 1) * 0.08 +
       (computeRegimeAlignment(directionBias, marketRegime) - 0.5) * 0.12 +
       (trendPersistenceScore / 100) * 0.16 -
+      clamp(falseBreakout.falseBreakoutRisk / 100, 0, 0.22) +
+      clamp(falseBreakout.breakoutHealthScore / 100, 0, 0.12) +
+      clamp(falseBreakout.followThroughQuality / 100, 0, 0.1) -
       conflictingSignalCount * 0.06 -
       (stale ? 0.12 : 0) -
       (riskState === "avoid" ? 0.18 : riskState === "caution" ? 0.08 : 0),
@@ -1284,6 +1398,7 @@ function assessMarketQuality({
     signalQualityState,
     activeExchangeCount,
     marketRegime,
+    falseBreakout,
   )
   const stabilityAssessment = classifyStabilityAssessment(
     volatilityStabilityScore,
@@ -1308,7 +1423,9 @@ function assessMarketQuality({
     warning:
       signalQualityState === "weak signal" ||
       signalQualityState === "noisy / avoid" ||
-      marketRegime.regimeClarity === "ambiguous"
+      marketRegime.regimeClarity === "ambiguous" ||
+      falseBreakout.falseBreakoutRisk >= 70 ||
+      falseBreakout.breakoutStatus === "false breakout risk"
         ? "Conditions currently unsuitable for high-confidence directional interpretation."
         : null,
     directionalReadout: formatDirectionalReadout(
@@ -1422,6 +1539,7 @@ function countConflictingSignals({
   fiveMinuteReturn,
   exchangeConsensus,
   marketRegime,
+  falseBreakout,
 }: {
   volatilityRegime: BtcVolatilityRegime
   spreadState: BtcSpreadState
@@ -1433,6 +1551,7 @@ function countConflictingSignals({
   fiveMinuteReturn: number | null
   exchangeConsensus: BtcExchangeConsensusMetrics | null
   marketRegime: BtcMarketRegimeSnapshot
+  falseBreakout: BtcFalseBreakoutSnapshot
 }) {
   return [
     volatilityRegime === "elevated" || volatilityRegime === "extreme",
@@ -1453,6 +1572,8 @@ function countConflictingSignals({
     marketRegime.regimeClarity === "ambiguous" ||
       marketRegime.regimeConfidence < 55 ||
       marketRegime.regimeStabilityScore < 45,
+    falseBreakout.falseBreakoutRisk >= 65,
+    falseBreakout.breakoutStatus === "false breakout risk",
   ].filter(Boolean).length
 }
 
@@ -1481,12 +1602,15 @@ function classifyDirectionalClarity(
   signalQualityState: BtcSignalQualityState,
   activeExchangeCount: number,
   marketRegime: BtcMarketRegimeSnapshot,
+  falseBreakout: BtcFalseBreakoutSnapshot,
 ): BtcDirectionalClarity {
   if (
     directionBias === "neutral" ||
     signalQualityState === "noisy / avoid" ||
     activeExchangeCount <= 1 ||
-    marketRegime.regimeClarity === "ambiguous"
+    marketRegime.regimeClarity === "ambiguous" ||
+    falseBreakout.falseBreakoutRisk >= 70 ||
+    falseBreakout.breakoutStatus === "false breakout risk"
   ) {
     return "unclear"
   }
