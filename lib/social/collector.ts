@@ -16,8 +16,7 @@ export interface FetchBtcSocialNewsResult extends BtcSocialNewsSnapshot {
   socialStatus: SocialSourceStatus
   truthStatus: SocialSourceStatus
   newsStatus: {
-    cryptopanic: NewsSourceStatus
-    newsapi: NewsSourceStatus
+    cryptocurrencyCv: NewsSourceStatus
   }
 }
 
@@ -43,7 +42,9 @@ export async function fetchBtcSocialNewsIntelligence(options?: {
     sourceStatus: {
       x: xResult,
       truthSocial: truthResult,
-      news: newsResult.sourceStatus,
+      news: {
+        cryptocurrencyCv: aggregateNewsStatus(newsResult.sourceStatus),
+      },
     },
   })
 
@@ -54,6 +55,22 @@ export async function fetchBtcSocialNewsIntelligence(options?: {
     newsItems,
     socialStatus: xResult,
     truthStatus: truthResult,
-    newsStatus: newsResult.sourceStatus,
+    newsStatus: {
+      cryptocurrencyCv: aggregateNewsStatus(newsResult.sourceStatus),
+    },
+  }
+}
+
+function aggregateNewsStatus(sourceStatus: {
+  cryptopanic: NewsSourceStatus
+  newsapi: NewsSourceStatus
+}) {
+  return {
+    enabled: sourceStatus.cryptopanic.enabled || sourceStatus.newsapi.enabled,
+    warning:
+      sourceStatus.cryptopanic.warning ??
+      sourceStatus.newsapi.warning ??
+      null,
+    itemCount: sourceStatus.cryptopanic.itemCount + sourceStatus.newsapi.itemCount,
   }
 }

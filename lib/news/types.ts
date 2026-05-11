@@ -1,4 +1,4 @@
-export type NewsSourceId = "cryptopanic" | "newsapi" | "manual" | "unknown"
+export type NewsSourceId = string
 
 export interface NewsItem {
   id: string

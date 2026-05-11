@@ -33,12 +33,7 @@ export async function GET() {
             itemCount: 0,
           },
           news: {
-            cryptopanic: {
-              enabled: false,
-              warning: null,
-              itemCount: 0,
-            },
-            newsapi: {
+            cryptocurrencyCv: {
               enabled: false,
               warning: null,
               itemCount: 0,

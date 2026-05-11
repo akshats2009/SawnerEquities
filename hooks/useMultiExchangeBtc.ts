@@ -34,6 +34,7 @@ import type {
   BtcJournalSnapshot,
   BtcJournalWindow,
 } from "@/lib/btc/journal-types"
+import { fetchFreeCryptoNewsItems } from "@/lib/news/freeCryptoNews"
 import {
   BTC_EXCHANGE_CONFIGS,
   buildBtcPriceConsensus,
@@ -45,7 +46,11 @@ import {
   startBtcExchangeStream,
 } from "@/lib/btc/multiExchangeRealtime"
 import type { RealtimeBtcTick } from "@/lib/btc/realtime"
-import type { BtcSocialNewsSnapshot } from "@/lib/sentiment/eventScoring"
+import {
+  buildBtcSocialNewsSnapshot,
+  type BtcSocialNewsSnapshot,
+} from "@/lib/sentiment/eventScoring"
+import type { BtcSignalSuppressionSnapshot } from "@/lib/analysis/signalSuppression"
 
 type SignalPerformanceWindow = BtcJournalWindow
 
@@ -81,6 +86,8 @@ const MAX_TICK_AGE_MS = 75 * 60 * 1000
 const MAX_TICKS = 2400
 const MAX_BIAS_SNAPSHOTS = 18
 const NEUTRAL_DIRECTIONAL_BAND_PCT = 0.08
+const DECISION_PUBLISH_INTERVAL_MS = 8_000
+const DECISION_PRICE_MOVE_THRESHOLD_PCT = 0.18
 const INITIAL_EXCHANGE_FEEDS = buildInitialExchangeFeeds()
 const INITIAL_PRICE_CONSENSUS: BtcPriceConsensus = {
   consolidatedPrice: null,
@@ -117,11 +124,13 @@ export function useMultiExchangeBtc(productId = "BTC-USD"): RealtimeBtcState {
   const [nowMs, setNowMs] = useState(() => Date.now())
   const [socialNews, setSocialNews] = useState<BtcSocialNewsSnapshot | null>(null)
   const [catalystEntries, setCatalystEntries] = useState(() => readBtcCatalystEntries())
+  const [publishedDecision, setPublishedDecision] = useState<BtcDecisionSnapshot | null>(null)
 
   const exchangeFeedsRef = useRef(exchangeFeeds)
   const latestConsensusTickRef = useRef<RealtimeBtcTick | null>(null)
   const consensusSequenceRef = useRef(0)
   const decisionRef = useRef<BtcDecisionSnapshot | null>(null)
+  const publishedDecisionAtMsRef = useRef<number | null>(null)
   const signalSuppressionOverrideRef = useRef(signalSuppressionOverrideEnabled)
   const watchMinuteBucketRef = useRef<number | null>(null)
   const catalystSnapshotRef = useRef<number | null>(null)
@@ -166,7 +175,7 @@ export function useMultiExchangeBtc(productId = "BTC-USD"): RealtimeBtcState {
     }
   }, [])
 
-  const decision = useMemo(
+  const rawDecision = useMemo(
     () =>
       analyzeBtcPriceDecision(ticks, {
         staleThresholdMs: 20_000,
@@ -175,6 +184,24 @@ export function useMultiExchangeBtc(productId = "BTC-USD"): RealtimeBtcState {
       }),
     [priceConsensus, socialNews, ticks],
   )
+
+  useEffect(() => {
+    setPublishedDecision((current) => {
+      if (current === null) {
+        publishedDecisionAtMsRef.current = rawDecision.asOfMs
+        return rawDecision
+      }
+
+      if (shouldAdoptDecision(current, rawDecision, publishedDecisionAtMsRef.current)) {
+        publishedDecisionAtMsRef.current = rawDecision.asOfMs
+        return rawDecision
+      }
+
+      return current
+    })
+  }, [rawDecision])
+
+  const decision = publishedDecision ?? rawDecision
 
   useEffect(() => {
     decisionRef.current = decision
@@ -189,15 +216,30 @@ export function useMultiExchangeBtc(productId = "BTC-USD"): RealtimeBtcState {
 
     async function loadSocialNews() {
       try {
-        const response = await fetch("/api/social-news", {
-          cache: "no-store",
+        const freeNews = await fetchFreeCryptoNewsItems({
+          limit: 8,
         })
 
-        if (!response.ok) {
-          return
-        }
+        const snapshot = buildBtcSocialNewsSnapshot({
+          asOfMs: Date.now(),
+          socialPosts: [],
+          newsItems: freeNews.items,
+          sourceStatus: {
+            x: {
+              enabled: false,
+              warning: "X_BEARER_TOKEN is not configured.",
+              itemCount: 0,
+            },
+            truthSocial: {
+              enabled: false,
+              warning:
+                "TRUTH_SOCIAL_FEED_URL is not configured. Truth Social ingestion is disabled unless a manual or third-party feed is provided.",
+              itemCount: 0,
+            },
+            news: freeNews.sourceStatus,
+          },
+        })
 
-        const snapshot = (await response.json()) as BtcSocialNewsSnapshot
         if (isMounted) {
           setSocialNews(snapshot)
         }
@@ -467,6 +509,95 @@ export function useMultiExchangeBtc(productId = "BTC-USD"): RealtimeBtcState {
       })
     }
   }
+}
+
+function shouldAdoptDecision(
+  current: BtcDecisionSnapshot,
+  next: BtcDecisionSnapshot,
+  lastPublishedAtMs: number | null,
+) {
+  if (lastPublishedAtMs === null) {
+    return true
+  }
+
+  const elapsedMs = next.asOfMs - lastPublishedAtMs
+  const priceMovePct = percentMove(current.lastPrice, next.lastPrice)
+  const confidenceShift = Math.abs(next.confidenceScore - current.confidenceScore)
+
+  const suppressionEscalated =
+    signalSuppressionSeverity(next.signalSuppression.level) >
+    signalSuppressionSeverity(current.signalSuppression.level)
+  const suppressionResolved =
+    signalSuppressionSeverity(next.signalSuppression.level) <
+    signalSuppressionSeverity(current.signalSuppression.level)
+  const hardDirectionFlip =
+    current.directionBias !== next.directionBias &&
+    next.directionBias !== "neutral" &&
+    next.confidenceScore >= 55 &&
+    next.marketQuality.signalQualityScore >= 58 &&
+    next.marketQuality.signalQualityState !== "weak signal" &&
+    next.marketState.interpretability !== "low" &&
+    next.signalSuppression.level === "none"
+  const hardRegimeShift =
+    current.marketRegime.primaryRegime !== next.marketRegime.primaryRegime &&
+    next.marketRegime.regimeConfidence >= 58 &&
+    next.marketRegime.regimeStabilityScore >= 58
+  const hardStateShift =
+    current.marketState.state !== next.marketState.state &&
+    (next.marketState.state === "unavailable" ||
+      next.marketState.state === "unstable" ||
+      next.marketState.signalInterpretabilityScore >= 60)
+  const hardRiskShift = current.riskState !== next.riskState && next.riskState === "avoid"
+
+  if (
+    suppressionEscalated ||
+    hardDirectionFlip ||
+    hardRegimeShift ||
+    hardStateShift ||
+    hardRiskShift
+  ) {
+    return true
+  }
+
+  if (confidenceShift >= 14 || priceMovePct >= DECISION_PRICE_MOVE_THRESHOLD_PCT) {
+    return true
+  }
+
+  if (suppressionResolved && elapsedMs >= DECISION_PUBLISH_INTERVAL_MS / 2) {
+    return true
+  }
+
+  return elapsedMs >= DECISION_PUBLISH_INTERVAL_MS
+}
+
+function percentMove(previousPrice: number | null, nextPrice: number | null) {
+  if (
+    previousPrice === null ||
+    nextPrice === null ||
+    previousPrice === 0 ||
+    Number.isNaN(previousPrice) ||
+    Number.isNaN(nextPrice)
+  ) {
+    return 0
+  }
+
+  return Math.abs((nextPrice - previousPrice) / previousPrice) * 100
+}
+
+function signalSuppressionSeverity(level: BtcSignalSuppressionSnapshot["level"]) {
+  if (level === "none") {
+    return 0
+  }
+
+  if (level === "caution") {
+    return 1
+  }
+
+  if (level === "suppress directional bias") {
+    return 2
+  }
+
+  return 3
 }
 
 function buildInitialExchangeFeeds() {

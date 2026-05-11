@@ -215,11 +215,6 @@ export function BtcDecisionTerminal() {
                 <div className="mt-1 text-foreground">{decision.explanation.biasChangeCondition}</div>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                <MiniStat label="Bid" value={formatCurrency(decision.bid, 2)} />
-                <MiniStat label="Ask" value={formatCurrency(decision.ask, 2)} />
-                <MiniStat label="Consensus" value={formatCurrency(priceConsensus.consolidatedPrice, 2)} />
-              </div>
             </CardContent>
           </Card>
         </header>
@@ -243,43 +238,15 @@ export function BtcDecisionTerminal() {
           </CardContent>
         </Card>
 
-        <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-          <div className="space-y-4">
-            <Card className="border-white/10 bg-[#0c1628]/88">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <CardTitle>Live BTC State</CardTitle>
-                    <CardDescription>
-                      Consolidated multi-exchange price and live candlestick view.
-                    </CardDescription>
-                  </div>
-                  <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
-                    {priceConsensus.activeExchangeCount}/{priceConsensus.totalExchangeCount} exchanges
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-6">
-                  <MiniStat label="Consensus price" value={formatCurrency(price, 2)} />
-                  <MiniStat
-                    label="Consensus spread"
-                    value={priceConsensus.spread === null ? "n/a" : formatCurrency(priceConsensus.spread, 2)}
-                  />
-                  <MiniStat
-                    label="Active feeds"
-                    value={`${priceConsensus.activeExchangeCount}/${priceConsensus.totalExchangeCount}`}
-                  />
-                  <MiniStat label="Max deviation" value={formatPercentOrNA(priceConsensus.maxDeviationPct, 2)} />
-                  <MiniStat label="Latency" value={formatLatency(priceConsensus.latencyMs)} />
-                  <MiniStat label="Volume" value={formatTradeSize(decision.volume24h)} />
-                </div>
-
-                <BtcCandlestickChart ticks={ticks} />
-              </CardContent>
-            </Card>
-          </div>
-
+        <CollapsibleSection
+          title="Decision details"
+          description="Snapshot reason, market state, and forward outlook."
+          onToggle={(open) => {
+            if (open) {
+              registerPanelOpen("Decision details")
+            }
+          }}
+        >
           <div className="space-y-4">
             <Card className="border-white/10 bg-[#0c1628]/88">
               <CardHeader className="pb-3">
@@ -403,7 +370,7 @@ export function BtcDecisionTerminal() {
               </CardContent>
             </Card>
           </div>
-        </section>
+        </CollapsibleSection>
 
         <div className="space-y-4">
           <CollapsibleSection
@@ -934,7 +901,7 @@ export function BtcDecisionTerminal() {
                     status={socialNews?.sourceStatus.truthSocial ?? null}
                   />
                   <SourceStatusCard
-                    label="Crypto / News"
+                    label="Free Crypto News"
                     status={socialNews?.sourceStatus.news ?? null}
                   />
                 </div>
@@ -1529,20 +1496,17 @@ function SourceStatusCard({
     )
   }
 
-  if ("cryptopanic" in status) {
+  if ("cryptocurrencyCv" in status) {
     return (
       <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-3">
         <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">{label}</div>
         <div className="mt-1 flex flex-wrap gap-2">
           <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
-            CryptoPanic {status.cryptopanic.enabled ? "on" : "off"} ({status.cryptopanic.itemCount})
-          </Badge>
-          <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
-            NewsAPI {status.newsapi.enabled ? "on" : "off"} ({status.newsapi.itemCount})
+            Free Crypto News {status.cryptocurrencyCv.enabled ? "on" : "off"} ({status.cryptocurrencyCv.itemCount})
           </Badge>
         </div>
         <div className="mt-2 text-xs leading-5 text-muted-foreground">
-          {status.cryptopanic.warning ?? status.newsapi.warning ?? "News sources are ready."}
+          {status.cryptocurrencyCv.warning ?? "News source is ready."}
         </div>
       </div>
     )
@@ -3092,6 +3056,8 @@ function formatSourceLabel(value: string) {
       return "CryptoPanic"
     case "newsapi":
       return "NewsAPI"
+    case "cryptocurrency_cv":
+      return "Free Crypto News"
     default:
       return value
   }

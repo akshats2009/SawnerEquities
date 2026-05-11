@@ -42,8 +42,7 @@ export interface BtcSocialNewsSourceStatus {
   x: SocialSourceStatus
   truthSocial: SocialSourceStatus
   news: {
-    cryptopanic: NewsSourceStatus
-    newsapi: NewsSourceStatus
+    cryptocurrencyCv: NewsSourceStatus
   }
 }
 
@@ -479,8 +478,7 @@ function buildWarning(input: {
     if (
       !input.sourceStatus.x.enabled &&
       !input.sourceStatus.truthSocial.enabled &&
-      !input.sourceStatus.news.cryptopanic.enabled &&
-      !input.sourceStatus.news.newsapi.enabled
+      !input.sourceStatus.news.cryptocurrencyCv.enabled
     ) {
       return "No social/news sources are configured. Event pressure is unavailable."
     }
@@ -594,8 +592,7 @@ function countEnabledSources(sourceStatus: BtcSocialNewsSourceStatus) {
   return [
     sourceStatus.x.enabled,
     sourceStatus.truthSocial.enabled,
-    sourceStatus.news.cryptopanic.enabled,
-    sourceStatus.news.newsapi.enabled,
+    sourceStatus.news.cryptocurrencyCv.enabled,
   ].filter(Boolean).length
 }
 
