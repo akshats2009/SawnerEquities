@@ -34,7 +34,9 @@ export interface ConfidenceReliabilityDiagnostics {
   selectedWindow: ConfidenceReliabilityWindow
   totalResolvedCount: number
   qualifiedResolvedCount: number
+  regimeQualifiedResolvedCount: number
   excludedLowQualityCount: number
+  excludedLowRegimeCount: number
   sampleSizeWarning: string | null
   summary: {
     hitRate: number | null
@@ -52,6 +54,8 @@ interface ConfidenceObservation {
   percentChange: number
   directionallyCorrect: boolean
   signalQualityScore: number
+  regimeConfidenceScore: number
+  regimeStabilityScore: number
 }
 
 const CONFIDENCE_BUCKETS: Array<{
@@ -84,13 +88,24 @@ export function buildConfidenceReliabilityDiagnostics(
   const qualifiedObservations = observations.filter(
     (observation) => observation.signalQualityScore >= 55,
   )
+  const regimeQualifiedObservations = observations.filter(
+    (observation) =>
+      observation.regimeConfidenceScore >= 55 &&
+      observation.regimeStabilityScore >= 45,
+  )
   const effectiveObservations =
-    qualifiedObservations.length > 0 ? qualifiedObservations : observations
+    regimeQualifiedObservations.length > 0
+      ? regimeQualifiedObservations
+      : qualifiedObservations.length > 0
+        ? qualifiedObservations
+        : observations
   const qualifiedResolvedCount = qualifiedObservations.length
+  const regimeQualifiedResolvedCount = regimeQualifiedObservations.length
   const excludedLowQualityCount = totalResolvedCount - qualifiedResolvedCount
+  const excludedLowRegimeCount = totalResolvedCount - regimeQualifiedResolvedCount
   const sampleSizeWarning =
-    qualifiedResolvedCount < MIN_SAMPLE_WARNING_COUNT
-      ? `Sample size is small for ${selectedWindow} (${qualifiedResolvedCount} quality-qualified resolved outcomes). Treat calibration and threshold results as directional only.`
+    regimeQualifiedResolvedCount < MIN_SAMPLE_WARNING_COUNT
+      ? `Sample size is small for ${selectedWindow} (${regimeQualifiedResolvedCount} regime-qualified resolved outcomes, ${qualifiedResolvedCount} signal-quality-qualified). Treat calibration and threshold results as directional only.`
       : null
 
   const buckets = CONFIDENCE_BUCKETS.map((bucket) =>
@@ -110,7 +125,9 @@ export function buildConfidenceReliabilityDiagnostics(
     selectedWindow,
     totalResolvedCount,
     qualifiedResolvedCount,
+    regimeQualifiedResolvedCount,
     excludedLowQualityCount,
+    excludedLowRegimeCount,
     sampleSizeWarning,
     summary: {
       hitRate: buildHitRate(effectiveObservations),
@@ -143,6 +160,8 @@ function flattenResolvedObservations(
           row.bias,
           outcome,
           row.marketQuality?.signalQualityScore ?? row.confidence,
+          row.marketRegime?.regimeConfidence ?? row.confidence,
+          row.marketRegime?.regimeStabilityScore ?? row.confidence,
         ),
       )
     }
@@ -156,6 +175,8 @@ function toObservation(
   bias: BtcDirectionBias,
   outcome: BtcJournalOutcome,
   signalQualityScore: number,
+  regimeConfidenceScore: number,
+  regimeStabilityScore: number,
 ): ConfidenceObservation {
   return {
     confidence,
@@ -163,6 +184,8 @@ function toObservation(
     percentChange: outcome.percentChange,
     directionallyCorrect: outcome.directionallyCorrect ?? false,
     signalQualityScore,
+    regimeConfidenceScore,
+    regimeStabilityScore,
   }
 }
 

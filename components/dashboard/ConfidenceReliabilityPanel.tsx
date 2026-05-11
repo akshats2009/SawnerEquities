@@ -50,6 +50,9 @@ export function ConfidenceReliabilityPanel({
             <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
               {diagnostics.qualifiedResolvedCount} quality-qualified
             </Badge>
+            <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+              {diagnostics.regimeQualifiedResolvedCount} regime-qualified
+            </Badge>
           </div>
         </div>
       </CardHeader>
@@ -79,6 +82,12 @@ export function ConfidenceReliabilityPanel({
         {diagnostics.excludedLowQualityCount > 0 ? (
           <div className="rounded-2xl border border-sky-500/20 bg-sky-500/10 px-3 py-3 text-sm text-sky-100">
             {diagnostics.excludedLowQualityCount} resolved outcomes were below the signal-quality cutoff and were excluded from calibration.
+          </div>
+        ) : null}
+
+        {diagnostics.excludedLowRegimeCount > 0 ? (
+          <div className="rounded-2xl border border-violet-500/20 bg-violet-500/10 px-3 py-3 text-sm text-violet-100">
+            {diagnostics.excludedLowRegimeCount} resolved outcomes were below the regime-quality cutoff and were excluded from calibration.
           </div>
         ) : null}
 
@@ -326,7 +335,7 @@ function LegendPill({
   tone,
   children,
 }: {
-  tone: "emerald" | "rose" | "amber"
+  tone: "emerald" | "rose" | "amber" | "violet"
   children: string
 }) {
   const toneClasses =
@@ -334,7 +343,9 @@ function LegendPill({
       ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-100"
       : tone === "rose"
         ? "border-rose-500/20 bg-rose-500/10 text-rose-100"
-        : "border-amber-500/20 bg-amber-500/10 text-amber-100"
+        : tone === "violet"
+          ? "border-violet-500/20 bg-violet-500/10 text-violet-100"
+          : "border-amber-500/20 bg-amber-500/10 text-amber-100"
 
   return (
     <span className={cn("rounded-full border px-2 py-1", toneClasses)}>{children}</span>

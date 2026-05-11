@@ -12,7 +12,7 @@ import {
   Satellite,
   Zap,
 } from "lucide-react"
-import { useState, type ReactNode } from "react"
+import { useMemo, useState, type ReactNode } from "react"
 
 import { useRealtimeBtc } from "@/hooks/useRealtimeBtc"
 import { Badge } from "@/components/ui/badge"
@@ -33,7 +33,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { cn, formatCompactNumber, formatCurrency, formatPercent } from "@/lib/utils"
+import { clamp, cn, formatCompactNumber, formatCurrency, formatPercent } from "@/lib/utils"
+import type {
+  BtcMarketRegimeSnapshot,
+  BtcRegimeTransition,
+} from "@/lib/analysis/regimeDetection"
 import { type RealtimeBtcTick } from "@/lib/btc/realtime"
 import {
   exportBtcJournalAsCsv,
@@ -53,11 +57,16 @@ export function BtcDecisionTerminal() {
     decision,
     latestTick,
     signalPerformance,
+    exchangeHealth,
+    priceConsensus,
+    marketRegime,
+    regimeTransitions,
+    regimeWarnings,
     clearJournal,
   } = useRealtimeBtc()
   const [clearDialogOpen, setClearDialogOpen] = useState(false)
 
-  const price = decision.lastPrice
+  const price = priceConsensus.consolidatedPrice
   const priceMove = calculatePriceMove(ticks)
   const priceDirectionClass =
     priceMove === null
@@ -88,10 +97,12 @@ export function BtcDecisionTerminal() {
                 BTC Decision Engine
               </Badge>
               <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
-                Coinbase WebSocket
+                Multi-exchange WebSocket
               </Badge>
               <span className="text-xs uppercase tracking-[0.25em] text-muted-foreground">
-                {latestTick ? `Last tick ${formatWallClock(latestTick.exchangeTimeMs)}` : "Awaiting first tick"}
+                {priceConsensus.consolidatedPrice !== null && latestTick
+                  ? `Last consensus tick ${formatWallClock(latestTick.exchangeTimeMs)}`
+                  : "Consensus unavailable"}
               </span>
             </div>
 
@@ -195,7 +206,7 @@ export function BtcDecisionTerminal() {
                   </Badge>
                 </div>
               </CardHeader>
-              <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
                 <DecisionChip
                   label="Direction bias"
                   value={decision.marketQuality.directionalReadout}
@@ -215,6 +226,11 @@ export function BtcDecisionTerminal() {
                   label="Observation window"
                   value={decision.observationWindow}
                   icon={<Activity className="size-4" />}
+                />
+                <DecisionChip
+                  label="Market regime"
+                  value={marketRegime.primaryRegime}
+                  icon={<RefreshCw className="size-4" />}
                 />
               </CardContent>
             </Card>
@@ -417,6 +433,37 @@ export function BtcDecisionTerminal() {
 
             <Card className="border-white/10 bg-[#0c1628]/88">
               <CardHeader className="pb-3">
+                <CardTitle>Price Consensus</CardTitle>
+                <CardDescription>
+                  Consolidated price from active exchange feeds.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-3 sm:grid-cols-2">
+                <MiniStat
+                  label="Consensus price"
+                  value={
+                    priceConsensus.consolidatedPrice === null
+                      ? "stale / unavailable"
+                      : formatCurrency(priceConsensus.consolidatedPrice, 0)
+                  }
+                />
+                <MiniStat
+                  label="Active exchanges"
+                  value={`${priceConsensus.activeExchangeCount}/${priceConsensus.totalExchangeCount}`}
+                />
+                <MiniStat
+                  label="Max deviation"
+                  value={formatMetric(priceConsensus.maxDeviationPct, "%")}
+                />
+                <MiniStat
+                  label="Agreement score"
+                  value={`${priceConsensus.agreementScore}/100`}
+                />
+              </CardContent>
+            </Card>
+
+            <Card className="border-white/10 bg-[#0c1628]/88">
+              <CardHeader className="pb-3">
                 <CardTitle>Market Quality</CardTitle>
                 <CardDescription>
                   Guardrail for directional clarity and signal noise.
@@ -439,6 +486,14 @@ export function BtcDecisionTerminal() {
                   <MiniStat
                     label="Stability"
                     value={decision.marketQuality.stabilityAssessment}
+                  />
+                  <MiniStat
+                    label="Exchange agreement"
+                    value={`${decision.marketQuality.exchangeAgreementScore}/100`}
+                  />
+                  <MiniStat
+                    label="Stale feeds"
+                    value={`${decision.marketQuality.staleExchangeCount}/${decision.marketQuality.totalExchangeCount}`}
                   />
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -467,6 +522,84 @@ export function BtcDecisionTerminal() {
                     <div>{decision.marketQuality.warning}</div>
                   </div>
                 ) : null}
+              </CardContent>
+            </Card>
+
+            <Card className="border-white/10 bg-[#0c1628]/88">
+              <CardHeader className="pb-3">
+                <CardTitle>Market Regime</CardTitle>
+                <CardDescription>
+                  Classifies whether BTC is trending, reverting, compressing, or destabilizing.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <MiniStat label="Primary regime" value={marketRegime.primaryRegime} />
+                  <MiniStat label="Confidence" value={`${marketRegime.regimeConfidence}/100`} />
+                  <MiniStat label="Stability" value={`${marketRegime.regimeStabilityScore}/100`} />
+                  <MiniStat label="Clarity" value={marketRegime.regimeClarity} />
+                </div>
+
+                <div className="space-y-2 rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-3">
+                  <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                    Explanation
+                  </div>
+                  <div className="text-sm leading-6 text-foreground">
+                    {marketRegime.explanation}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "border-white/10",
+                      marketRegime.isTransitioning
+                        ? "bg-amber-500/10 text-amber-200"
+                        : marketRegime.regimeClarity === "clear"
+                          ? "bg-emerald-500/10 text-emerald-200"
+                          : marketRegime.regimeClarity === "mixed"
+                            ? "bg-sky-500/10 text-sky-200"
+                            : "bg-rose-500/10 text-rose-200",
+                    )}
+                  >
+                    {marketRegime.isTransitioning ? "transitioning" : marketRegime.regimeClarity}
+                  </Badge>
+                  {marketRegime.secondaryRegime ? (
+                    <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+                      secondary: {marketRegime.secondaryRegime}
+                    </Badge>
+                  ) : null}
+                </div>
+
+                {regimeWarnings.length > 0 || marketRegime.warnings.length > 0 ? (
+                  <div className="space-y-2">
+                    {Array.from(new Set([...marketRegime.warnings, ...regimeWarnings])).map((warning) => (
+                      <AlertRow key={warning} tone="warning" text={warning} />
+                    ))}
+                  </div>
+                ) : null}
+
+                <MarketRegimeTimeline
+                  asOfMs={decision.asOfMs}
+                  currentRegime={marketRegime}
+                  transitions={regimeTransitions}
+                  warnings={Array.from(new Set([...marketRegime.warnings, ...regimeWarnings]))}
+                />
+              </CardContent>
+            </Card>
+
+            <Card className="border-white/10 bg-[#0c1628]/88">
+              <CardHeader className="pb-3">
+                <CardTitle>Exchange Health</CardTitle>
+                <CardDescription>
+                  Live status and latest quote context per exchange.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {exchangeHealth.map((feed) => (
+                  <ExchangeHealthRow key={feed.exchange} feed={feed} />
+                ))}
               </CardContent>
             </Card>
 
@@ -886,6 +1019,429 @@ function MiniStat({ label, value }: { label: string; value: string }) {
   )
 }
 
+function MarketRegimeTimeline({
+  currentRegime,
+  transitions,
+  warnings,
+  asOfMs,
+}: {
+  currentRegime: BtcMarketRegimeSnapshot
+  transitions: BtcRegimeTransition[]
+  warnings: string[]
+  asOfMs: number
+}) {
+  const segments = useMemo(
+    () => buildRegimeTimelineSegments(transitions, currentRegime, asOfMs),
+    [asOfMs, currentRegime, transitions],
+  )
+
+  return (
+    <div className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.02] p-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+            Market Regime Timeline
+          </div>
+          <div className="text-sm text-muted-foreground">
+            Recent regime shifts, confidence, and stability compressed into a horizontal scan line.
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+          <LegendPill tone="emerald">Transition</LegendPill>
+          <LegendPill tone="amber">Unstable</LegendPill>
+          <LegendPill tone="rose">Low confidence</LegendPill>
+          <LegendPill tone="violet">False breakout</LegendPill>
+        </div>
+      </div>
+
+      {segments.length > 0 ? (
+        <div className="overflow-x-auto pb-1">
+          <div className="flex items-stretch gap-1.5">
+            {segments.map((segment, index) => (
+              <button
+                type="button"
+                key={`${segment.startMs}-${segment.regime}-${index}`}
+                className={cn(
+                  "group relative flex min-h-[4.5rem] min-w-[4.25rem] flex-1 items-stretch rounded-lg border px-2 py-1 text-left outline-none transition-all duration-150",
+                  timelineToneClasses(segment.regime),
+                  segment.isTransition ? "ring-1 ring-white/25" : "",
+                  segment.isLowConfidence || segment.isUnstable || segment.isFalseBreakout
+                    ? "border-white/25"
+                    : "border-white/10",
+                  "hover:-translate-y-0.5 hover:border-white/35 focus-visible:-translate-y-0.5 focus-visible:border-white/40 focus-visible:ring-2 focus-visible:ring-white/20",
+                )}
+                style={{
+                  flexGrow: segment.growth,
+                  flexBasis: "4.5rem",
+                }}
+                aria-label={segment.tooltip}
+                title={segment.tooltip}
+              >
+                <div className="flex h-full min-h-[3.8rem] flex-col justify-between gap-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-foreground">
+                      {segment.abbrev}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {segment.isTransition ? (
+                        <span className="size-2 rounded-full bg-emerald-300/90 shadow-[0_0_0_2px_rgba(16,185,129,0.16)]" />
+                      ) : null}
+                      {segment.isLowConfidence ? (
+                        <span className="size-2 rounded-full bg-rose-300/90 shadow-[0_0_0_2px_rgba(244,63,94,0.16)]" />
+                      ) : null}
+                      {segment.isUnstable ? (
+                        <span className="size-2 rounded-full bg-amber-300/90 shadow-[0_0_0_2px_rgba(245,158,11,0.16)]" />
+                      ) : null}
+                      {segment.isFalseBreakout ? (
+                        <span className="size-2 rounded-full bg-violet-300/90 shadow-[0_0_0_2px_rgba(167,139,250,0.16)]" />
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="relative flex-1 overflow-hidden rounded-md border border-white/10 bg-black/25">
+                    <div
+                      className={cn(
+                        "absolute inset-y-0 left-0",
+                        segment.isFalseBreakout
+                          ? "bg-violet-500/25"
+                          : segment.isLowConfidence
+                            ? "bg-rose-500/20"
+                            : segment.isUnstable
+                              ? "bg-amber-500/20"
+                              : segment.isTransition
+                                ? "bg-emerald-500/20"
+                                : "bg-white/10",
+                      )}
+                      style={{ width: `${segment.fillPct}%` }}
+                    />
+                    <div className="absolute inset-0 flex items-center justify-center px-1">
+                      <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-foreground/90">
+                        {segment.label}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-1 font-mono text-[9px] text-muted-foreground">
+                    <span>{segment.timestampLabel}</span>
+                    <span>{segment.confidence}/100</span>
+                    <span>{segment.stability}/100</span>
+                  </div>
+                </div>
+                <span className="sr-only">{segment.tooltip}</span>
+                <span className="pointer-events-none absolute left-1/2 top-0 z-20 hidden w-max max-w-[18rem] -translate-x-1/2 -translate-y-[110%] rounded-lg border border-white/10 bg-[#08111f] px-3 py-2 text-left text-[11px] leading-5 text-slate-200 shadow-[0_16px_40px_rgba(0,0,0,0.4)] group-hover:block group-focus-visible:block">
+                  <span className="block font-mono uppercase tracking-[0.18em] text-slate-300">
+                    {segment.tooltipTitle}
+                  </span>
+                  <span className="mt-1 block">{segment.tooltip}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-3 text-sm text-muted-foreground">
+          Regime history will populate as the live decision engine classifies new states.
+        </div>
+      )}
+
+      <div className="grid gap-2 xl:grid-cols-[1.2fr_0.8fr]">
+        <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-3 text-sm leading-6 text-muted-foreground">
+          The strip emphasizes transitions and flags low-confidence, unstable, and failed breakout regimes so shifts are easier to scan than a text list.
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-3 text-sm leading-6 text-muted-foreground">
+          {warnings.length > 0 ? warnings.slice(0, 3).join(" ") : "No additional regime warnings right now."}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function LegendPill({
+  tone,
+  children,
+}: {
+  tone: "emerald" | "amber" | "rose" | "violet"
+  children: string
+}) {
+  const toneClasses =
+    tone === "emerald"
+      ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-100"
+      : tone === "amber"
+        ? "border-amber-500/20 bg-amber-500/10 text-amber-100"
+        : tone === "rose"
+          ? "border-rose-500/20 bg-rose-500/10 text-rose-100"
+          : "border-violet-500/20 bg-violet-500/10 text-violet-100"
+
+  return (
+    <span className={cn("rounded-full border px-2 py-1", toneClasses)}>{children}</span>
+  )
+}
+
+function ExchangeHealthRow({
+  feed,
+}: {
+  feed: {
+    exchange: string
+    label: string
+    latestTick: {
+      price: number
+      bid: number | null
+      ask: number | null
+      spread: number | null
+      latencyMs: number
+    } | null
+    stale: boolean
+    connectionState: string
+    error: string | null
+  }
+}) {
+  const tick = feed.latestTick
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-medium text-foreground">{feed.label}</div>
+          <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+            {feed.exchange}
+          </div>
+        </div>
+        <Badge
+          variant="outline"
+          className={cn(
+            "border-white/10",
+            feed.connectionState === "open" && !feed.stale
+              ? "bg-emerald-500/10 text-emerald-200"
+              : feed.stale
+                ? "bg-amber-500/10 text-amber-200"
+                : "bg-rose-500/10 text-rose-200",
+          )}
+        >
+          {feed.stale ? "stale" : "live"}
+        </Badge>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <MiniStat
+          label="Latest price"
+          value={tick ? formatCurrency(tick.price, 0) : "n/a"}
+        />
+        <MiniStat
+          label="Bid / ask"
+          value={
+            tick && tick.bid !== null && tick.ask !== null
+              ? `${formatCurrency(tick.bid, 0)} / ${formatCurrency(tick.ask, 0)}`
+              : "n/a"
+          }
+        />
+        <MiniStat
+          label="Spread"
+          value={tick && tick.spread !== null ? formatCurrency(tick.spread, 2) : "n/a"}
+        />
+        <MiniStat
+          label="Latency"
+          value={formatLatency(tick?.latencyMs ?? null)}
+        />
+      </div>
+      {feed.error ? (
+        <div className="mt-3 rounded-2xl border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm text-rose-100">
+          {feed.error}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function buildRegimeTimelineSegments(
+  transitions: BtcRegimeTransition[],
+  currentRegime: BtcMarketRegimeSnapshot,
+  asOfMs: number,
+) {
+  const normalized = [...transitions].sort((left, right) => left.timestampMs - right.timestampMs)
+  const segments: Array<{
+    regime: string
+    label: string
+    abbrev: string
+    startMs: number
+    endMs: number
+    confidence: number
+    stability: number
+    timestampLabel: string
+    durationLabel: string
+    isTransition: boolean
+    isLowConfidence: boolean
+    isUnstable: boolean
+    isFalseBreakout: boolean
+    fillPct: number
+    tooltipTitle: string
+    tooltip: string
+    growth: number
+  }> = []
+
+  for (let index = 0; index < normalized.length; index += 1) {
+    const transition = normalized[index]
+    const nextTransition = normalized[index + 1] ?? null
+    const endMs = nextTransition?.timestampMs ?? asOfMs
+    const durationMinutes = Math.max((endMs - transition.timestampMs) / 60000, 0.25)
+    const isLowConfidence = transition.confidence < 55
+    const isUnstable = transition.stabilityScore < 45 || isLowConfidence
+    const isFalseBreakout =
+      transition.to === "breakout conditions" &&
+      Boolean(nextTransition) &&
+      (nextTransition?.to === "choppy / noisy" ||
+        nextTransition?.to === "mean-reverting" ||
+        nextTransition?.to === "exhaustion conditions")
+    const fillPct = clamp(transition.confidence, 18, 100)
+
+    segments.push({
+      regime: transition.to,
+      label: abbreviateRegime(transition.to),
+      abbrev: abbreviateRegime(transition.to),
+      startMs: transition.timestampMs,
+      endMs,
+      confidence: transition.confidence,
+      stability: transition.stabilityScore,
+      timestampLabel: formatWallClock(transition.timestampMs),
+      durationLabel: formatDurationLabel(durationMinutes),
+      isTransition: index > 0,
+      isLowConfidence,
+      isUnstable,
+      isFalseBreakout,
+      fillPct,
+      tooltipTitle: transition.to,
+      tooltip: buildRegimeTooltip(transition.to, transition.timestampMs, transition.confidence, transition.stabilityScore, {
+        isTransition: index > 0,
+        isLowConfidence,
+        isUnstable,
+        isFalseBreakout,
+      }),
+      growth: Math.min(durationMinutes, 24),
+    })
+  }
+
+  const currentStartMs = normalized.at(-1)?.timestampMs ?? asOfMs
+  const currentDurationMinutes = Math.max((asOfMs - currentStartMs) / 60000, 0.25)
+  segments.push({
+    regime: currentRegime.primaryRegime,
+    label: abbreviateRegime(currentRegime.primaryRegime),
+    abbrev: abbreviateRegime(currentRegime.primaryRegime),
+    startMs: currentStartMs,
+    endMs: asOfMs,
+    confidence: currentRegime.regimeConfidence,
+    stability: currentRegime.regimeStabilityScore,
+    timestampLabel: formatWallClock(currentStartMs),
+    durationLabel: formatDurationLabel(currentDurationMinutes),
+    isTransition: normalized.length > 0,
+    isLowConfidence: currentRegime.regimeConfidence < 55,
+    isUnstable:
+      currentRegime.regimeStabilityScore < 45 ||
+      currentRegime.regimeClarity === "ambiguous" ||
+      currentRegime.isTransitioning,
+    isFalseBreakout:
+      currentRegime.primaryRegime === "breakout conditions" &&
+      (currentRegime.warnings.some((warning) => warning.toLowerCase().includes("false breakout")) ||
+        currentRegime.warnings.some((warning) => warning.toLowerCase().includes("reversal risk"))),
+    fillPct: clamp(currentRegime.regimeConfidence, 18, 100),
+    tooltipTitle: currentRegime.primaryRegime,
+    tooltip: buildRegimeTooltip(currentRegime.primaryRegime, currentStartMs, currentRegime.regimeConfidence, currentRegime.regimeStabilityScore, {
+      isTransition: normalized.length > 0,
+      isLowConfidence: currentRegime.regimeConfidence < 55,
+      isUnstable:
+        currentRegime.regimeStabilityScore < 45 ||
+        currentRegime.regimeClarity === "ambiguous" ||
+        currentRegime.isTransitioning,
+      isFalseBreakout:
+        currentRegime.primaryRegime === "breakout conditions" &&
+        (currentRegime.warnings.some((warning) => warning.toLowerCase().includes("false breakout")) ||
+          currentRegime.warnings.some((warning) => warning.toLowerCase().includes("reversal risk"))),
+    }),
+    growth: Math.min(currentDurationMinutes, 24),
+  })
+
+  return segments
+}
+
+function formatDurationLabel(minutes: number) {
+  if (!Number.isFinite(minutes) || minutes < 1) {
+    return "<1m"
+  }
+
+  if (minutes < 60) {
+    return `${minutes.toFixed(minutes < 10 ? 1 : 0)}m`
+  }
+
+  const hours = minutes / 60
+  return `${hours.toFixed(hours < 10 ? 1 : 0)}h`
+}
+
+function abbreviateRegime(regime: string) {
+  switch (regime) {
+    case "trending up":
+      return "TU"
+    case "trending down":
+      return "TD"
+    case "mean-reverting":
+      return "MR"
+    case "high-volatility expansion":
+      return "HV"
+    case "low-volatility compression":
+      return "LC"
+    case "choppy / noisy":
+      return "CN"
+    case "breakout conditions":
+      return "BO"
+    case "exhaustion conditions":
+      return "EX"
+    default:
+      return "??"
+  }
+}
+
+function buildRegimeTooltip(
+  regime: string,
+  timestampMs: number,
+  confidence: number,
+  stability: number,
+  flags: {
+    isTransition: boolean
+    isLowConfidence: boolean
+    isUnstable: boolean
+    isFalseBreakout: boolean
+  },
+) {
+  const flagParts = [
+    flags.isTransition ? "transition" : null,
+    flags.isLowConfidence ? "low confidence" : null,
+    flags.isUnstable ? "unstable" : null,
+    flags.isFalseBreakout ? "false breakout pattern" : null,
+  ].filter(Boolean)
+
+  const flagText = flagParts.length > 0 ? ` Flags: ${flagParts.join(", ")}.` : ""
+
+  return `${regime} at ${formatWallClock(timestampMs)}. Confidence ${confidence}/100. Stability ${stability}/100.${flagText}`
+}
+
+function timelineToneClasses(regime: string) {
+  switch (regime) {
+    case "trending up":
+      return "bg-emerald-500/10"
+    case "trending down":
+      return "bg-rose-500/10"
+    case "mean-reverting":
+      return "bg-sky-500/10"
+    case "high-volatility expansion":
+      return "bg-amber-500/10"
+    case "low-volatility compression":
+      return "bg-cyan-500/10"
+    case "choppy / noisy":
+      return "bg-slate-500/10"
+    case "breakout conditions":
+      return "bg-violet-500/10"
+    case "exhaustion conditions":
+      return "bg-orange-500/10"
+    default:
+      return "bg-white/[0.03]"
+  }
+}
+
 function formatMetric(value: number | null | undefined, suffix: string) {
   if (value === null || value === undefined || Number.isNaN(value)) {
     return "n/a"
@@ -918,6 +1474,14 @@ function formatOptionalMs(value: number | null) {
   }
 
   return formatWallClock(value)
+}
+
+function formatLatency(value: number | null) {
+  if (value === null || Number.isNaN(value)) {
+    return "n/a"
+  }
+
+  return `${Math.round(value)} ms`
 }
 
 function feedLabel(state: string, stale: boolean) {
