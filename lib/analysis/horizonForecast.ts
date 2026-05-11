@@ -176,7 +176,11 @@ function buildHorizonForecast(
   const suppressionPenalty = computeSuppressionPenalty(context)
   const noisePenalty = normalizeScore(context.marketQuality.noiseLevel)
   const stabilityPenalty = normalizeStabilityPenalty(context)
-  const directionBiasSignal = computeDirectionBiasSignal(context.directionBias)
+  const directionBiasSignal = computeScaledDirectionBiasSignal(
+    context.directionBias,
+    context.momentumScore,
+    context.marketRegime.regimeConfidence,
+  )
   const eventSignal = computeEventSignal(context.socialNews)
   const eventRiskPenalty = computeEventRiskPenalty(context.socialNews)
   const eventNoisePenalty = computeEventNoisePenalty(context.socialNews)
@@ -199,17 +203,18 @@ function buildHorizonForecast(
     eventNoisePenalty * 0.12 -
     eventAvailabilityPenalty * 0.08
 
+  // Quality is fully earned — no base offset. Unclear markets get low quality.
   const forecastQuality = clamp(
-    50 +
-      Math.abs(directionScore) * 26 +
-      agreement * 12 +
-      trend * 8 +
-      consistency * 6 -
-      suppressionPenalty * 10 -
-      noisePenalty * 10 -
-      eventRiskPenalty * 8 -
-      eventNoisePenalty * 10 -
-      eventAvailabilityPenalty * 6,
+    Math.abs(directionScore) * 35 +
+      agreement * 18 +
+      trend * 14 +
+      consistency * 10 +
+      regimeSignal * 12 -
+      suppressionPenalty * 18 -
+      noisePenalty * 14 -
+      eventRiskPenalty * 10 -
+      eventNoisePenalty * 12 -
+      eventAvailabilityPenalty * 8,
     0,
     100,
   )
@@ -225,13 +230,54 @@ function buildHorizonForecast(
     0,
     100,
   )
-  const confidence = clamp(
+  const rawConfidence = clamp(
     forecastQuality * 0.5 +
       forecastStability * 0.3 +
       Math.abs(directionScore) * 18 -
       suppressionPenalty * 8 -
       eventAvailabilityPenalty * 10 -
       eventNoisePenalty * 6,
+    0,
+    100,
+  )
+
+  // Hard caps: suppression, regime weakness, and noisy/unstable market state each
+  // independently limit how confident the forecast can be.
+  const suppressionCap =
+    context.signalSuppression.level === "unavailable"
+      ? 20
+      : context.signalSuppression.level === "suppress directional bias"
+        ? 38
+        : context.signalSuppression.level === "caution"
+          ? 62
+          : 100
+
+  const regimeCap =
+    context.marketRegime.regimeConfidence < 35
+      ? 25
+      : context.marketRegime.regimeConfidence < 50
+        ? 42
+        : context.marketRegime.regimeConfidence < 65
+          ? 60
+          : 100
+
+  const marketStateCap =
+    context.marketState.state === "unavailable"
+      ? 20
+      : context.marketState.state === "noisy" || context.marketState.state === "unstable"
+        ? 40
+        : 100
+
+  // 30m and 1h require stronger confirmation before reaching high confidence.
+  const horizonCap =
+    horizon === "1h"
+      ? 78
+      : horizon === "30m"
+        ? 86
+        : 100
+
+  const confidence = clamp(
+    Math.min(rawConfidence, suppressionCap, regimeCap, marketStateCap, horizonCap),
     0,
     100,
   )
@@ -346,6 +392,25 @@ function normalizeScore(value: number | null | undefined) {
   return clamp(value / 100, 0, 1)
 }
 
+// Returns a scaled direction signal in [-1, 1] using momentum strength and regime confidence
+// instead of a binary ±1 flip whenever directionBias changes.
+function computeScaledDirectionBiasSignal(
+  directionBias: BtcDirectionBias,
+  momentumScore: number,
+  regimeConfidence: number,
+): number {
+  if (directionBias === "neutral") {
+    return 0
+  }
+
+  const sign = directionBias === "bullish" ? 1 : -1
+  // Scale by momentum magnitude (0–1) and regime confidence (0–1), so a
+  // marginal flip near the threshold contributes much less than a strong read.
+  const momentumStrength = clamp(Math.abs(momentumScore) / 100, 0, 1)
+  const regimeWeight = clamp(regimeConfidence / 100, 0, 1)
+  return sign * clamp(momentumStrength * 0.7 + regimeWeight * 0.3, 0, 1)
+}
+
 function normalizeDirectionalConsistency(
   rollingReturns: Record<BtcObservationWindow, number | null>,
   directionBias: BtcDirectionBias,
@@ -363,23 +428,12 @@ function normalizeDirectionalConsistency(
   return clamp(aligned / returns.length, 0, 1)
 }
 
-function computeDirectionBiasSignal(directionBias: BtcDirectionBias) {
-  if (directionBias === "bullish") {
-    return 1
-  }
-
-  if (directionBias === "bearish") {
-    return -1
-  }
-
-  return 0
-}
 
 function computeRegimeSignal(
   context: BtcHorizonForecastContext,
   horizon: BtcForecastHorizon,
 ) {
-  const biasSignal = computeDirectionBiasSignal(context.directionBias)
+  const biasSignal = context.directionBias === "bullish" ? 1 : context.directionBias === "bearish" ? -1 : 0
   const regime = context.marketRegime.primaryRegime
   let signal = 0
 
