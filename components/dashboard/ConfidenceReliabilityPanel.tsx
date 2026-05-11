@@ -59,6 +59,19 @@ export function ConfidenceReliabilityPanel({
             <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
               {diagnostics.suppressionQualifiedResolvedCount} suppression-qualified
             </Badge>
+            <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+              {diagnostics.socialNewsQualifiedResolvedCount} social/news-qualified
+            </Badge>
+            <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+              {diagnostics.forecastQualityAverage === null
+                ? "forecast n/a"
+                : `forecast quality ${diagnostics.forecastQualityAverage.toFixed(0)}/100`}
+            </Badge>
+            <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+              {diagnostics.forecastStabilityAverage === null
+                ? "forecast n/a"
+                : `forecast stability ${diagnostics.forecastStabilityAverage.toFixed(0)}/100`}
+            </Badge>
           </div>
         </div>
       </CardHeader>
@@ -100,6 +113,12 @@ export function ConfidenceReliabilityPanel({
         {diagnostics.excludedSuppressedCount > 0 ? (
           <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 px-3 py-3 text-sm text-rose-100">
             {diagnostics.excludedSuppressedCount} resolved outcomes were suppressed and were excluded from calibration unless override was enabled.
+          </div>
+        ) : null}
+
+        {diagnostics.excludedSocialNewsNoisyCount > 0 ? (
+          <div className="rounded-2xl border border-slate-500/20 bg-slate-500/10 px-3 py-3 text-sm text-slate-100">
+            {diagnostics.excludedSocialNewsNoisyCount} resolved outcomes were paired with noisy or unavailable social/news flow and were excluded from the social/news-qualified sample.
           </div>
         ) : null}
 
@@ -147,6 +166,25 @@ export function ConfidenceReliabilityPanel({
         <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-3 text-sm leading-6 text-muted-foreground">
           Breakout outcomes are compared against non-breakout outcomes, and false-breakout warnings are
           measured against actual reversal behavior in the selected window.
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <SummaryStat
+            label="Forecast quality"
+            value={
+              diagnostics.forecastQualityAverage === null
+                ? "n/a"
+                : `${diagnostics.forecastQualityAverage.toFixed(0)}/100`
+            }
+          />
+          <SummaryStat
+            label="Forecast stability"
+            value={
+              diagnostics.forecastStabilityAverage === null
+                ? "n/a"
+                : `${diagnostics.forecastStabilityAverage.toFixed(0)}/100`
+            }
+          />
         </div>
 
         <div className="overflow-hidden rounded-2xl border border-white/10">

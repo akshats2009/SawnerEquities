@@ -8,6 +8,7 @@ import type {
   BtcMarketInterpretability,
   BtcMarketStateLabel,
 } from "@/lib/analysis/marketState"
+import type { BtcEventRiskState } from "@/lib/sentiment/eventScoring"
 
 export type ConfidenceBucketLabel =
   | "0-40%"
@@ -46,6 +47,10 @@ export interface ConfidenceReliabilityDiagnostics {
   excludedLowRegimeCount: number
   excludedLowStateCount: number
   excludedSuppressedCount: number
+  socialNewsQualifiedResolvedCount: number
+  excludedSocialNewsNoisyCount: number
+  forecastQualityAverage: number | null
+  forecastStabilityAverage: number | null
   sampleSizeWarning: string | null
   summary: {
     hitRate: number | null
@@ -83,6 +88,14 @@ interface ConfidenceObservation {
   breakoutDirection: "up" | "down" | "none"
   breakoutStatus: string
   falseBreakoutRisk: number
+  socialNewsRiskState: BtcEventRiskState
+  socialNewsPressureScore: number
+  socialNewsAvailable: boolean
+}
+
+interface ForecastObservation {
+  forecastQuality: number
+  forecastStability: number
 }
 
 const CONFIDENCE_BUCKETS: Array<{
@@ -111,6 +124,7 @@ export function buildConfidenceReliabilityDiagnostics(
   selectedWindow: ConfidenceReliabilityWindow,
 ): ConfidenceReliabilityDiagnostics {
   const observations = flattenResolvedObservations(signalPerformance, selectedWindow)
+  const forecastObservations = flattenForecastObservations(signalPerformance, selectedWindow)
   const totalResolvedCount = observations.length
   const qualifiedObservations = observations.filter(
     (observation) => observation.signalQualityScore >= 55,
@@ -124,6 +138,11 @@ export function buildConfidenceReliabilityDiagnostics(
     (observation) =>
       observation.marketStateLabel !== "unavailable" &&
       observation.marketStateInterpretabilityScore >= 55,
+  )
+  const socialNewsQualifiedObservations = observations.filter(
+    (observation) =>
+      observation.socialNewsAvailable &&
+      observation.socialNewsRiskState !== "unreliable/noisy",
   )
   const suppressionQualifiedObservations = observations.filter(
     (observation) =>
@@ -144,13 +163,18 @@ export function buildConfidenceReliabilityDiagnostics(
   const regimeQualifiedResolvedCount = regimeQualifiedObservations.length
   const marketStateQualifiedResolvedCount = marketStateQualifiedObservations.length
   const suppressionQualifiedResolvedCount = suppressionQualifiedObservations.length
+  const socialNewsQualifiedResolvedCount = socialNewsQualifiedObservations.length
   const excludedLowQualityCount = totalResolvedCount - qualifiedResolvedCount
   const excludedLowRegimeCount = totalResolvedCount - regimeQualifiedResolvedCount
   const excludedLowStateCount = totalResolvedCount - marketStateQualifiedResolvedCount
   const excludedSuppressedCount = totalResolvedCount - suppressionQualifiedResolvedCount
+  const excludedSocialNewsNoisyCount = totalResolvedCount - socialNewsQualifiedResolvedCount
+  const forecastQualityAverage = buildAverageForecastQuality(forecastObservations)
+  const forecastStabilityAverage = buildAverageForecastStability(forecastObservations)
   const sampleSizeWarning =
-    marketStateQualifiedResolvedCount < MIN_SAMPLE_WARNING_COUNT
-      ? `Sample size is small for ${selectedWindow} (${marketStateQualifiedResolvedCount} market-state-qualified resolved outcomes, ${suppressionQualifiedResolvedCount} suppression-qualified, ${regimeQualifiedResolvedCount} regime-qualified, ${qualifiedResolvedCount} signal-quality-qualified). Treat calibration and threshold results as directional only.`
+    marketStateQualifiedResolvedCount < MIN_SAMPLE_WARNING_COUNT ||
+    socialNewsQualifiedResolvedCount < MIN_SAMPLE_WARNING_COUNT
+      ? `Sample size is small for ${selectedWindow} (${marketStateQualifiedResolvedCount} market-state-qualified, ${socialNewsQualifiedResolvedCount} social/news-qualified, ${suppressionQualifiedResolvedCount} suppression-qualified, ${regimeQualifiedResolvedCount} regime-qualified, ${qualifiedResolvedCount} signal-quality-qualified). Treat calibration and threshold results as directional only.`
       : null
 
   const buckets = CONFIDENCE_BUCKETS.map((bucket) =>
@@ -174,10 +198,14 @@ export function buildConfidenceReliabilityDiagnostics(
     regimeQualifiedResolvedCount,
     marketStateQualifiedResolvedCount,
     suppressionQualifiedResolvedCount,
+    socialNewsQualifiedResolvedCount,
     excludedLowQualityCount,
     excludedLowRegimeCount,
     excludedLowStateCount,
     excludedSuppressedCount,
+    excludedSocialNewsNoisyCount,
+    forecastQualityAverage,
+    forecastStabilityAverage,
     sampleSizeWarning,
     summary: {
       hitRate: buildHitRate(effectiveObservations),
@@ -220,8 +248,38 @@ function flattenResolvedObservations(
           row.falseBreakout?.breakoutDirection ?? "none",
           row.falseBreakout?.breakoutStatus ?? "no breakout",
           row.falseBreakout?.falseBreakoutRisk ?? 0,
+          row.socialNews?.eventRiskState ?? "unreliable/noisy",
+          row.socialNews?.pressureScore ?? 0,
+          row.socialNews?.available ?? false,
         ),
       )
+    }
+  }
+
+  return observations
+}
+
+function flattenForecastObservations(
+  signalPerformance: BtcJournalRow[],
+  selectedWindow: ConfidenceReliabilityWindow,
+): ForecastObservation[] {
+  const observations: ForecastObservation[] = []
+
+  for (const row of signalPerformance) {
+    if (selectedWindow !== "all" && !row.outcomes[selectedWindow].resolved) {
+      continue
+    }
+
+    if (!row.horizonForecast) {
+      continue
+    }
+
+    for (const horizon of ["15m", "30m", "1h"] as const) {
+      const forecast = row.horizonForecast.forecasts[horizon]
+      observations.push({
+        forecastQuality: forecast.forecastQuality,
+        forecastStability: forecast.forecastStability,
+      })
     }
   }
 
@@ -242,6 +300,9 @@ function toObservation(
   breakoutDirection: "up" | "down" | "none",
   breakoutStatus: string,
   falseBreakoutRisk: number,
+  socialNewsRiskState: BtcEventRiskState,
+  socialNewsPressureScore: number,
+  socialNewsAvailable: boolean,
 ): ConfidenceObservation {
   return {
     confidence,
@@ -258,6 +319,9 @@ function toObservation(
     breakoutDirection,
     breakoutStatus,
     falseBreakoutRisk,
+    socialNewsRiskState,
+    socialNewsPressureScore,
+    socialNewsAvailable,
   }
 }
 
@@ -382,6 +446,28 @@ function buildAveragePercentMove(observations: ConfidenceObservation[]) {
 
   return (
     observations.reduce((sum, observation) => sum + observation.percentChange, 0) /
+    observations.length
+  )
+}
+
+function buildAverageForecastQuality(observations: ForecastObservation[]) {
+  if (observations.length === 0) {
+    return null
+  }
+
+  return (
+    observations.reduce((sum, observation) => sum + observation.forecastQuality, 0) /
+    observations.length
+  )
+}
+
+function buildAverageForecastStability(observations: ForecastObservation[]) {
+  if (observations.length === 0) {
+    return null
+  }
+
+  return (
+    observations.reduce((sum, observation) => sum + observation.forecastStability, 0) /
     observations.length
   )
 }

@@ -8,6 +8,7 @@ import type {
 } from "@/lib/analysis/priceDecision"
 import type { BtcFalseBreakoutSnapshot } from "@/lib/analysis/falseBreakout"
 import type { BtcMarketRegimeSnapshot } from "@/lib/analysis/regimeDetection"
+import type { BtcSocialNewsSnapshot } from "@/lib/sentiment/eventScoring"
 
 export type BtcSignalSuppressionLevel =
   | "none"
@@ -37,6 +38,7 @@ export interface BtcSignalSuppressionInput {
   momentumScore: number
   priceAccelerationBpsPerMin2: number | null
   falseBreakoutAnalysis?: BtcFalseBreakoutSnapshot | null
+  socialNews?: BtcSocialNewsSnapshot | null
 }
 
 export function analyzeBtcSignalSuppression(
@@ -98,6 +100,26 @@ export function analyzeBtcSignalSuppression(
   if (falseBreakoutRisk >= 65 || breakoutStatus === "false breakout risk") {
     severity += 18
     reasons.push("breakout failure risk")
+  }
+
+  if (!input.socialNews || !input.socialNews.available) {
+    if (
+      input.riskState !== "clean" ||
+      input.marketQuality.noiseLevel >= 55 ||
+      input.spreadState === "expanding"
+    ) {
+      severity += 6
+      reasons.push("news/social data unavailable")
+    }
+  } else if (input.socialNews.eventRiskState === "unreliable/noisy") {
+    severity += 12
+    reasons.push("news/social flow noisy")
+  } else if (
+    input.socialNews.eventRiskState === "active catalyst" &&
+    input.riskState === "avoid"
+  ) {
+    severity += 6
+    reasons.push("active market catalyst")
   }
 
   if (breakoutStatus === "ambiguous") {

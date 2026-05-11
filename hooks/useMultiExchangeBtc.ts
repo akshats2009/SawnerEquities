@@ -16,6 +16,18 @@ import {
   clearBtcJournalEntries,
   writeBtcJournalEntries,
 } from "@/lib/btc/journal"
+import {
+  appendBtcCatalystEvents,
+  clearBtcCatalystEntries,
+  readBtcCatalystEntries,
+} from "@/lib/btc/catalyst-history"
+import type { BtcCatalystHistoryEntry } from "@/lib/btc/catalyst-history"
+import {
+  appendBtcWatchEntry,
+  clearBtcWatchEntries,
+  readBtcWatchEntries,
+} from "@/lib/btc/watch-monitor"
+import type { BtcMarketWatchEntry } from "@/lib/btc/watch-monitor"
 import type {
   BtcJournalOutcome,
   BtcJournalRow,
@@ -33,6 +45,7 @@ import {
   startBtcExchangeStream,
 } from "@/lib/btc/multiExchangeRealtime"
 import type { RealtimeBtcTick } from "@/lib/btc/realtime"
+import type { BtcSocialNewsSnapshot } from "@/lib/sentiment/eventScoring"
 
 type SignalPerformanceWindow = BtcJournalWindow
 
@@ -50,13 +63,17 @@ export interface RealtimeBtcState {
   biasSnapshots: BtcJournalSnapshot[]
   breakoutHistory: BtcJournalSnapshot[]
   signalPerformance: BtcJournalRow[]
+  watchEntries: BtcMarketWatchEntry[]
+  catalystEntries: BtcCatalystHistoryEntry[]
   exchangeHealth: BtcExchangeFeedState[]
   priceConsensus: BtcPriceConsensus
   marketRegime: BtcMarketRegimeSnapshot
   regimeTransitions: BtcRegimeTransition[]
   regimeWarnings: string[]
+  socialNews: BtcSocialNewsSnapshot | null
   signalSuppressionOverrideEnabled: boolean
   setSignalSuppressionOverrideEnabled: (enabled: boolean) => void
+  clearCatalystHistory: () => void
   clearJournal: () => void
 }
 
@@ -94,15 +111,20 @@ export function useMultiExchangeBtc(productId = "BTC-USD"): RealtimeBtcState {
   )
   const [regimeTransitions, setRegimeTransitions] = useState<BtcRegimeTransition[]>([])
   const [regimeWarnings, setRegimeWarnings] = useState<string[]>([])
+  const [watchEntries, setWatchEntries] = useState(() => readBtcWatchEntries())
   const [signalSuppressionOverrideEnabled, setSignalSuppressionOverrideEnabled] =
     useState(false)
   const [nowMs, setNowMs] = useState(() => Date.now())
+  const [socialNews, setSocialNews] = useState<BtcSocialNewsSnapshot | null>(null)
+  const [catalystEntries, setCatalystEntries] = useState(() => readBtcCatalystEntries())
 
   const exchangeFeedsRef = useRef(exchangeFeeds)
   const latestConsensusTickRef = useRef<RealtimeBtcTick | null>(null)
   const consensusSequenceRef = useRef(0)
   const decisionRef = useRef<BtcDecisionSnapshot | null>(null)
   const signalSuppressionOverrideRef = useRef(signalSuppressionOverrideEnabled)
+  const watchMinuteBucketRef = useRef<number | null>(null)
+  const catalystSnapshotRef = useRef<number | null>(null)
 
   useEffect(() => {
     exchangeFeedsRef.current = exchangeFeeds
@@ -149,8 +171,9 @@ export function useMultiExchangeBtc(productId = "BTC-USD"): RealtimeBtcState {
       analyzeBtcPriceDecision(ticks, {
         staleThresholdMs: 20_000,
         exchangeConsensus: priceConsensus,
+        socialNews,
       }),
-    [priceConsensus, ticks],
+    [priceConsensus, socialNews, ticks],
   )
 
   useEffect(() => {
@@ -160,6 +183,105 @@ export function useMultiExchangeBtc(productId = "BTC-USD"): RealtimeBtcState {
   useEffect(() => {
     signalSuppressionOverrideRef.current = signalSuppressionOverrideEnabled
   }, [signalSuppressionOverrideEnabled])
+
+  useEffect(() => {
+    let isMounted = true
+
+    async function loadSocialNews() {
+      try {
+        const response = await fetch("/api/social-news", {
+          cache: "no-store",
+        })
+
+        if (!response.ok) {
+          return
+        }
+
+        const snapshot = (await response.json()) as BtcSocialNewsSnapshot
+        if (isMounted) {
+          setSocialNews(snapshot)
+        }
+      } catch {
+        if (isMounted) {
+          setSocialNews((current) => current)
+        }
+      }
+    }
+
+    void loadSocialNews()
+    const interval = setInterval(() => {
+      void loadSocialNews()
+    }, 5 * 60 * 1000)
+
+    return () => {
+      isMounted = false
+      clearInterval(interval)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!socialNews?.available || socialNews.topEvents.length === 0) {
+      return
+    }
+
+    if (catalystSnapshotRef.current === socialNews.asOfMs) {
+      return
+    }
+
+    catalystSnapshotRef.current = socialNews.asOfMs
+    setCatalystEntries((current) =>
+      appendBtcCatalystEvents(current, socialNews.topEvents),
+    )
+  }, [socialNews])
+
+  const isStale = priceConsensus.activeExchangeCount === 0 || decision.dataQuality.stale
+
+  useEffect(() => {
+    if (
+      decision.lastPrice === null ||
+      decision.latestTickMs === null ||
+      priceConsensus.activeExchangeCount === 0
+    ) {
+      return
+    }
+
+    const bucket = Math.floor(nowMs / 60_000)
+    if (watchMinuteBucketRef.current === bucket) {
+      return
+    }
+
+    watchMinuteBucketRef.current = bucket
+    const nextWatchEntry = {
+      id: `${decision.asOfMs}-${decision.latestTickMs}-${bucket}`,
+      timestampMs: nowMs,
+      price: decision.lastPrice,
+      directionReadout: decision.marketQuality.directionalReadout,
+      confidence: decision.confidenceScore,
+      marketState: decision.marketState,
+      marketQuality: decision.marketQuality,
+      riskState: decision.riskState,
+      observationWindow: decision.observationWindow,
+      suppressionLevel: decision.signalSuppression.level,
+      regime: decision.marketRegime,
+      falseBreakout: decision.falseBreakout,
+      topReason: decision.explanation.primaryReason,
+      whatToWatchNext: decision.explanation.biasChangeCondition,
+      activeExchangeCount: priceConsensus.activeExchangeCount,
+      totalExchangeCount: priceConsensus.totalExchangeCount,
+      isStale,
+      latencyMs: priceConsensus.latencyMs,
+      directionBias: decision.directionBias,
+    } satisfies Parameters<typeof appendBtcWatchEntry>[0]
+
+    setWatchEntries(appendBtcWatchEntry(nextWatchEntry))
+  }, [
+    decision,
+    isStale,
+    nowMs,
+    priceConsensus.activeExchangeCount,
+    priceConsensus.latencyMs,
+    priceConsensus.totalExchangeCount,
+  ])
 
   useEffect(() => {
     const regime = decision.marketRegime
@@ -237,7 +359,6 @@ export function useMultiExchangeBtc(productId = "BTC-USD"): RealtimeBtcState {
   )
   const lastMessageAtMs = maxTimestamp(exchangeFeedList.map((feed) => feed.lastMessageAtMs))
   const lastHeartbeatAtMs = maxTimestamp(exchangeFeedList.map((feed) => feed.lastHeartbeatAtMs))
-  const isStale = priceConsensus.activeExchangeCount === 0 || decision.dataQuality.stale
 
   const terminalError = priceConsensus.activeExchangeCount > 0 ? null : error
 
@@ -255,19 +376,30 @@ export function useMultiExchangeBtc(productId = "BTC-USD"): RealtimeBtcState {
     biasSnapshots,
     breakoutHistory,
     signalPerformance,
+    watchEntries,
+    catalystEntries,
     exchangeHealth: exchangeFeedList,
     priceConsensus,
     marketRegime: decision.marketRegime,
     regimeTransitions,
     regimeWarnings,
+    socialNews,
     signalSuppressionOverrideEnabled,
     setSignalSuppressionOverrideEnabled,
+    clearCatalystHistory: () => {
+      clearBtcCatalystEntries()
+      setCatalystEntries([])
+      catalystSnapshotRef.current = null
+    },
     clearJournal: () => {
       clearBtcJournalEntries()
+      clearBtcWatchEntries()
       setBiasSnapshots([])
+      setWatchEntries([])
       setRegimeTransitions([])
       setRegimeWarnings([])
       setSignalSuppressionOverrideEnabled(false)
+      watchMinuteBucketRef.current = null
     },
   }
 
@@ -485,6 +617,8 @@ function recordBiasSnapshot({
       marketState: decision.marketState,
       marketRegime: decision.marketRegime,
       falseBreakout: decision.falseBreakout,
+      horizonForecast: decision.horizonForecast,
+      socialNews: decision.socialNews,
       signalSuppression: suppression,
       confidence: decision.confidenceScore,
       observationWindow: decision.observationWindow,

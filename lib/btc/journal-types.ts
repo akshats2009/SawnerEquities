@@ -3,7 +3,9 @@ import type { BtcMarketQualitySnapshot } from "@/lib/analysis/priceDecision"
 import type { BtcMarketStateSnapshot } from "@/lib/analysis/marketState"
 import type { BtcFalseBreakoutSnapshot } from "@/lib/analysis/falseBreakout"
 import type { BtcMarketRegimeSnapshot } from "@/lib/analysis/regimeDetection"
+import type { BtcHorizonForecastSnapshot } from "@/lib/analysis/horizonForecast"
 import type { BtcSignalSuppressionSnapshot } from "@/lib/analysis/signalSuppression"
+import type { BtcSocialNewsSnapshot } from "@/lib/sentiment/eventScoring"
 import type { MistakeTag } from "@/types"
 
 export type BtcJournalWindow = "1m" | "5m" | "15m" | "1h"
@@ -29,6 +31,8 @@ export interface BtcJournalSnapshot {
   marketRegime?: BtcMarketRegimeSnapshot | null
   falseBreakout?: BtcFalseBreakoutSnapshot | null
   signalSuppression?: BtcSignalSuppressionSnapshot | null
+  horizonForecast?: BtcHorizonForecastSnapshot | null
+  socialNews?: BtcSocialNewsSnapshot | null
   confidence: number
   observationWindow: BtcObservationWindow
   sourceTickMs: number | null

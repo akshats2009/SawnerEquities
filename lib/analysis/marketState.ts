@@ -6,6 +6,7 @@ import type {
 import type { BtcFalseBreakoutSnapshot } from "@/lib/analysis/falseBreakout"
 import type { BtcMarketRegimeSnapshot } from "@/lib/analysis/regimeDetection"
 import type { BtcSignalSuppressionSnapshot } from "@/lib/analysis/signalSuppression"
+import type { BtcSocialNewsSnapshot } from "@/lib/sentiment/eventScoring"
 
 export type BtcMarketStateLabel =
   | "clean"
@@ -28,6 +29,9 @@ export interface BtcMarketStateSnapshot {
   trendPersistenceScore: number
   chopNoiseRiskScore: number
   breakoutHealthScore: number
+  eventPressureScore: number
+  eventRiskState: BtcSocialNewsSnapshot["eventRiskState"]
+  socialNewsAvailable: boolean
   mainRisk: string
   primaryReason: string
   warning: string | null
@@ -40,6 +44,7 @@ export interface BtcMarketStateInput {
   signalSuppression: BtcSignalSuppressionSnapshot
   falseBreakout: BtcFalseBreakoutSnapshot
   exchangeConsensus: BtcExchangeConsensusMetrics | null
+  socialNews: BtcSocialNewsSnapshot | null
 }
 
 export function analyzeBtcMarketState(
@@ -48,11 +53,16 @@ export function analyzeBtcMarketState(
   const exchangeConsensusScore = input.exchangeConsensus?.agreementScore ?? 0
   const activeExchangeCount = input.exchangeConsensus?.activeExchangeCount ?? 0
   const staleExchangeCount = input.exchangeConsensus?.staleExchangeCount ?? 0
+  const socialNews = input.socialNews
+  const socialNewsAvailable = socialNews?.available ?? false
+  const eventPressureScore = socialNews?.pressureScore ?? 0
+  const eventRiskState = socialNews?.eventRiskState ?? "unreliable/noisy"
   const informationQualityScore = Math.round(
     clamp(
       input.marketQuality.signalQualityScore * 0.42 +
         input.marketQuality.tickConsistencyScore * 0.18 +
         exchangeConsensusScore * 0.18 +
+        socialNewsInfoBonus(socialNews) +
         input.marketRegime.regimeConfidence * 0.12 +
         input.marketRegime.regimeStabilityScore * 0.1 -
         stalePenalty(input.stale, staleExchangeCount),
@@ -79,6 +89,11 @@ export function analyzeBtcMarketState(
         spreadInstabilityScore(input.marketQuality) * 0.2 +
         regimeInstabilityScore(input.marketRegime) * 0.18 +
         disagreementRisk(exchangeConsensusScore, activeExchangeCount) * 0.16 +
+        socialNewsRiskPenalty(
+          socialNews,
+          input.marketQuality.noiseLevel,
+          input.marketRegime.isTransitioning,
+        ) +
         stalePenalty(input.stale, staleExchangeCount),
       0,
       100,
@@ -112,6 +127,7 @@ export function analyzeBtcMarketState(
       input.marketQuality.noiseLevel * 0.34 +
         (input.marketRegime.primaryRegime === "choppy / noisy" ? 28 : 0) +
         (input.marketRegime.regimeClarity === "ambiguous" ? 12 : 0) +
+        (socialNews?.eventRiskState === "unreliable/noisy" ? 10 : 0) +
         input.signalSuppression.reasons.length * 4 +
         (input.marketRegime.isTransitioning ? 8 : 0),
       0,
@@ -155,17 +171,22 @@ export function analyzeBtcMarketState(
     marketRegime: input.marketRegime,
     falseBreakout: input.falseBreakout,
     chopNoiseRiskScore,
+    socialNews,
+    marketQualityNoiseLevel: input.marketQuality.noiseLevel,
   })
   const primaryReason = buildPrimaryReason({
     state,
     interpretability,
     signalInterpretabilityScore,
     mainRisk,
+    socialNews,
   })
   const warning =
     state === "unavailable"
       ? "BTC market state is unavailable because the consolidated feed is stale or missing."
-      : state === "unstable" || interpretability === "low"
+      : socialNews?.eventRiskState === "active catalyst"
+        ? "A market-moving social/news catalyst is active. Interpret short-horizon BTC moves with extra caution."
+        : state === "unstable" || interpretability === "low"
         ? "Conditions currently unsuitable for high-confidence directional interpretation."
         : null
 
@@ -181,6 +202,9 @@ export function analyzeBtcMarketState(
     trendPersistenceScore: Math.round(clamp(trendPersistenceScore, 0, 100)),
     chopNoiseRiskScore,
     breakoutHealthScore,
+    eventPressureScore,
+    eventRiskState,
+    socialNewsAvailable,
     mainRisk,
     primaryReason,
     warning,
@@ -193,6 +217,46 @@ function stalePenalty(stale: boolean, staleExchangeCount: number) {
 
 function spreadQuality(marketQuality: BtcMarketQualitySnapshot) {
   return clamp(marketQuality.stabilityAssessment === "stable" ? 88 : marketQuality.stabilityAssessment === "mixed" ? 62 : 28, 0, 100)
+}
+
+function socialNewsInfoBonus(socialNews: BtcSocialNewsSnapshot | null) {
+  if (!socialNews || !socialNews.available) {
+    return 0
+  }
+
+  if (socialNews.eventRiskState === "active catalyst") {
+    return 12
+  }
+
+  if (socialNews.eventRiskState === "elevated") {
+    return 8
+  }
+
+  return 4
+}
+
+function socialNewsRiskPenalty(
+  socialNews: BtcSocialNewsSnapshot | null,
+  marketQualityNoiseLevel: number,
+  isTransitioning: boolean,
+) {
+  if (!socialNews) {
+    return marketQualityNoiseLevel >= 55 || isTransitioning ? 6 : 0
+  }
+
+  if (!socialNews.available) {
+    return marketQualityNoiseLevel >= 55 || isTransitioning ? 12 : 0
+  }
+
+  if (socialNews.eventRiskState === "unreliable/noisy") {
+    return 18
+  }
+
+  if (socialNews.eventRiskState === "active catalyst") {
+    return 8
+  }
+
+  return 0
 }
 
 function spreadInstabilityScore(marketQuality: BtcMarketQualitySnapshot) {
@@ -291,6 +355,8 @@ function deriveMainRisk({
   marketRegime,
   falseBreakout,
   chopNoiseRiskScore,
+  socialNews,
+  marketQualityNoiseLevel,
 }: {
   stale: boolean
   activeExchangeCount: number
@@ -298,7 +364,24 @@ function deriveMainRisk({
   marketRegime: BtcMarketRegimeSnapshot
   falseBreakout: BtcFalseBreakoutSnapshot
   chopNoiseRiskScore: number
+  socialNews: BtcSocialNewsSnapshot | null
+  marketQualityNoiseLevel: number
 }) {
+  if (socialNews?.eventRiskState === "active catalyst") {
+    return "social/news catalyst"
+  }
+
+  if (
+    (!socialNews || !socialNews.available) &&
+    (marketQualityNoiseLevel >= 55 || marketRegime.isTransitioning)
+  ) {
+    return "news visibility gap"
+  }
+
+  if (socialNews?.eventRiskState === "unreliable/noisy") {
+    return "news noise"
+  }
+
   if (stale) {
     return "stale data"
   }
@@ -327,11 +410,13 @@ function buildPrimaryReason({
   interpretability,
   signalInterpretabilityScore,
   mainRisk,
+  socialNews,
 }: {
   state: BtcMarketStateLabel
   interpretability: BtcMarketInterpretability
   signalInterpretabilityScore: number
   mainRisk: string
+  socialNews: BtcSocialNewsSnapshot | null
 }) {
   if (state === "unavailable") {
     return "The consolidated BTC feed is stale or unavailable, so the market state cannot be trusted."
@@ -346,7 +431,15 @@ function buildPrimaryReason({
   }
 
   if (state === "clean") {
+    if (socialNews?.eventRiskState === "active catalyst") {
+      return `BTC is readable on price structure, but a social/news catalyst is active and may change the short-horizon read quickly.`
+    }
+
     return `BTC is readable because exchange agreement, spread behavior, and regime stability are aligned.`
+  }
+
+  if (socialNews?.eventRiskState === "active catalyst") {
+    return `BTC is partially readable, but a social/news catalyst is active and keeps interpretability at ${interpretability} (${signalInterpretabilityScore}/100).`
   }
 
   return `BTC is partially readable, but ${mainRisk} keeps interpretability at ${interpretability} (${signalInterpretabilityScore}/100).`

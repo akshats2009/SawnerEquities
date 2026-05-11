@@ -8,6 +8,7 @@ import type {
   BtcWindowMetrics,
 } from "@/lib/analysis/priceDecision"
 import type { BtcFalseBreakoutSnapshot } from "@/lib/analysis/falseBreakout"
+import type { BtcSocialNewsSnapshot } from "@/lib/sentiment/eventScoring"
 
 export type BtcMarketRegime =
   | "trending up"
@@ -61,6 +62,7 @@ export interface BtcRegimeInput {
   windowMetrics: BtcWindowMetrics[]
   stale: boolean
   falseBreakoutAnalysis?: BtcFalseBreakoutSnapshot | null
+  socialNews?: BtcSocialNewsSnapshot | null
 }
 
 interface RegimeScore {
@@ -148,6 +150,8 @@ function deriveRegimeMetrics(input: BtcRegimeInput) {
     0,
     1,
   )
+  const socialNewsSignal = computeSocialNewsSignal(input.socialNews ?? null, directionalBias)
+  const socialNewsRiskScore = computeSocialNewsRiskScore(input.socialNews ?? null)
   const falseBreakoutRiskScore = clamp(
     (input.falseBreakoutAnalysis?.falseBreakoutRisk ?? 35) / 100,
     0,
@@ -187,6 +191,8 @@ function deriveRegimeMetrics(input: BtcRegimeInput) {
     directionalBias,
     breakoutConfidenceScore,
     breakoutHealthScore,
+    socialNewsSignal,
+    socialNewsRiskScore,
     falseBreakoutRiskScore,
     followThroughQualityScore,
     exhaustionScore,
@@ -200,6 +206,7 @@ function buildRegimeScores(metrics: ReturnType<typeof deriveRegimeMetrics>): Reg
       metrics.momentumAlignment * 0.18 +
       metrics.directionConsistency * 0.12 +
       metrics.agreementScore * 0.08 +
+      Math.max(metrics.socialNewsSignal, 0) * 0.08 +
       (metrics.spreadStress < 0.45 ? 0.08 : -0.05) +
       (metrics.volatilityLevel < 0.9 ? 0.02 : -0.05),
     0,
@@ -212,6 +219,7 @@ function buildRegimeScores(metrics: ReturnType<typeof deriveRegimeMetrics>): Reg
       metrics.momentumAlignment * 0.18 +
       metrics.directionConsistency * 0.12 +
       metrics.agreementScore * 0.08 +
+      Math.max(-metrics.socialNewsSignal, 0) * 0.08 +
       (metrics.spreadStress < 0.45 ? 0.08 : -0.05) +
       (metrics.volatilityLevel < 0.9 ? 0.02 : -0.05),
     0,
@@ -235,7 +243,8 @@ function buildRegimeScores(metrics: ReturnType<typeof deriveRegimeMetrics>): Reg
       metrics.spreadStress * 0.18 +
       metrics.tickVelocityScore * 0.16 +
       metrics.momentumAlignment * 0.1 -
-      metrics.compressionScore * 0.1,
+      metrics.compressionScore * 0.1 +
+      Math.abs(metrics.socialNewsSignal) * 0.06,
     0,
     1,
   )
@@ -257,7 +266,8 @@ function buildRegimeScores(metrics: ReturnType<typeof deriveRegimeMetrics>): Reg
       (1 - metrics.agreementScore) * 0.18 +
       (metrics.volatilityLevel >= 0.3 ? 0.12 : 0.04) +
       metrics.falseBreakoutRiskScore * 0.12 +
-      clamp(Math.abs(metrics.weightedReturn) < 0.06 ? 1 : 0, 0, 1) * 0.08,
+      clamp(Math.abs(metrics.weightedReturn) < 0.06 ? 1 : 0, 0, 1) * 0.08 +
+      metrics.socialNewsRiskScore * 0.1,
     0,
     1,
   )
@@ -273,7 +283,8 @@ function buildRegimeScores(metrics: ReturnType<typeof deriveRegimeMetrics>): Reg
       metrics.breakoutConfidenceScore * 0.08 +
       metrics.breakoutHealthScore * 0.14 +
       (1 - metrics.falseBreakoutRiskScore) * 0.12 +
-      metrics.followThroughQualityScore * 0.12 -
+      metrics.followThroughQualityScore * 0.12 +
+      Math.max(metrics.socialNewsSignal, 0) * 0.05 -
       metrics.exhaustionScore * 0.08,
     0,
     1,
@@ -288,7 +299,8 @@ function buildRegimeScores(metrics: ReturnType<typeof deriveRegimeMetrics>): Reg
       (1 - metrics.directionConsistency) * 0.1 +
       metrics.falseBreakoutRiskScore * 0.16 +
       metrics.exhaustionScore * 0.18 +
-      (1 - metrics.followThroughQualityScore) * 0.08,
+      (1 - metrics.followThroughQualityScore) * 0.08 +
+      metrics.socialNewsRiskScore * 0.08,
     0,
     1,
   )
@@ -775,6 +787,46 @@ function computeMomentumAlignment(
         ? 1
         : 0.3
   return clamp(statusScore * 0.55 + directionScore * 0.45, 0, 1)
+}
+
+function computeSocialNewsSignal(
+  socialNews: BtcSocialNewsSnapshot | null,
+  directionalBias: number,
+) {
+  if (!socialNews || !socialNews.available) {
+    return 0
+  }
+
+  if (socialNews.eventRiskState === "unreliable/noisy") {
+    return 0
+  }
+
+  const pressure = clamp(socialNews.pressureScore / 100, -1, 1)
+  if (directionalBias === 0) {
+    return pressure * 0.35
+  }
+
+  return pressure * Math.sign(directionalBias)
+}
+
+function computeSocialNewsRiskScore(socialNews: BtcSocialNewsSnapshot | null) {
+  if (!socialNews || !socialNews.available) {
+    return 0.25
+  }
+
+  if (socialNews.eventRiskState === "unreliable/noisy") {
+    return 0.85
+  }
+
+  if (socialNews.eventRiskState === "active catalyst") {
+    return 0.45
+  }
+
+  if (socialNews.eventRiskState === "elevated") {
+    return 0.22
+  }
+
+  return 0.08
 }
 
 function normalizeTickVelocity(value: number | null) {

@@ -29,6 +29,11 @@ import {
 } from "@/components/ui/card"
 import { clamp, cn, formatCompactNumber, formatCurrency, formatPercent } from "@/lib/utils"
 import type {
+  BtcHorizonForecast,
+  BtcForecastHorizon,
+  BtcForecastOutlook,
+} from "@/lib/analysis/horizonForecast"
+import type {
   BtcMarketRegimeSnapshot,
   BtcRegimeTransition,
 } from "@/lib/analysis/regimeDetection"
@@ -37,6 +42,17 @@ import {
   exportBtcJournalAsCsv,
   exportBtcJournalAsJson,
 } from "@/lib/btc/journal"
+import {
+  type BtcCatalystHistoryEntry,
+  exportBtcCatalystHistoryAsCsv,
+  exportBtcCatalystHistoryAsJson,
+} from "@/lib/btc/catalyst-history"
+import type { BtcMarketWatchEntry } from "@/lib/btc/watch-monitor"
+import type { BtcPriceConsensus } from "@/lib/btc/multiExchangeRealtime"
+import type {
+  BtcScoredMarketEvent,
+  BtcSocialNewsSourceStatus,
+} from "@/lib/sentiment/eventScoring"
 import { BtcCandlestickChart } from "@/components/dashboard/BtcCandlestickChart"
 import type { BtcJournalRow, BtcJournalOutcome } from "@/lib/btc/journal-types"
 
@@ -52,20 +68,29 @@ export function BtcDecisionTerminal() {
     decision,
     latestTick,
     signalPerformance,
+    watchEntries,
+    catalystEntries,
     exchangeHealth,
     priceConsensus,
     marketRegime,
     regimeTransitions,
     regimeWarnings,
+    socialNews,
     breakoutHistory,
     signalSuppressionOverrideEnabled,
     setSignalSuppressionOverrideEnabled,
+    clearCatalystHistory,
     clearJournal,
   } = useRealtimeBtc()
   const [clearDialogOpen, setClearDialogOpen] = useState(false)
+  const [clearCatalystDialogOpen, setClearCatalystDialogOpen] = useState(false)
+  const [lastOpenedPanel, setLastOpenedPanel] = useState("Decision Snapshot")
+  const [watchReportWindowMinutes, setWatchReportWindowMinutes] = useState<30 | 60>(30)
+  const [panelOpenCounts, setPanelOpenCounts] = useState<Record<string, number>>({})
 
   const price = priceConsensus.consolidatedPrice
   const priceMove = calculatePriceMove(ticks)
+  const topEvents = socialNews?.topEvents ?? []
   const priceDirectionClass =
     priceMove === null
       ? "text-foreground"
@@ -78,6 +103,14 @@ export function BtcDecisionTerminal() {
       : connectionState === "reconnecting" || connectionState === "connecting"
         ? "bg-amber-500/15 text-amber-200 border-amber-500/20"
         : "bg-rose-500/15 text-rose-200 border-rose-500/20"
+
+  function registerPanelOpen(panelName: string) {
+    setLastOpenedPanel(panelName)
+    setPanelOpenCounts((current) => ({
+      ...current,
+      [panelName]: (current[panelName] ?? 0) + 1,
+    }))
+  }
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-background text-foreground">
@@ -94,6 +127,9 @@ export function BtcDecisionTerminal() {
               </Badge>
               <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
                 Multi-exchange WebSocket
+              </Badge>
+              <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+                Watch log {watchEntries.length > 0 ? "active" : "warming"}
               </Badge>
               <span className="text-xs uppercase tracking-[0.25em] text-muted-foreground">
                 {priceConsensus.consolidatedPrice !== null && latestTick
@@ -306,6 +342,18 @@ export function BtcDecisionTerminal() {
                     label="Score"
                     value={`${decision.marketState.signalInterpretabilityScore}/100`}
                   />
+                  <MiniStat
+                    label="Event risk"
+                    value={decision.marketState.eventRiskState}
+                  />
+                  <MiniStat
+                    label="Event pressure"
+                    value={
+                      decision.marketState.socialNewsAvailable
+                        ? formatSignedScore(decision.marketState.eventPressureScore)
+                        : "n/a"
+                    }
+                  />
                 </div>
                 <div className="space-y-2 rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-3">
                   <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
@@ -320,6 +368,40 @@ export function BtcDecisionTerminal() {
                 ) : null}
               </CardContent>
             </Card>
+
+            <Card className="border-white/10 bg-[#0c1628]/88">
+              <CardHeader className="pb-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <CardTitle>Forward Outlook</CardTitle>
+                    <CardDescription>
+                      Short-horizon directional forecast for the next 15m, 30m, and 1h.
+                    </CardDescription>
+                  </div>
+                  <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+                    quality {decision.horizonForecast.forecastQuality}/100
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {decision.horizonForecast.warning ? (
+                  <AlertRow tone="warning" text={decision.horizonForecast.warning} />
+                ) : null}
+
+                <div className="grid gap-3 xl:grid-cols-3">
+                  {FORECAST_HORIZONS.map((horizon) => (
+                    <ForwardOutlookCard
+                      key={horizon}
+                      forecast={decision.horizonForecast.forecasts[horizon]}
+                    />
+                  ))}
+                </div>
+
+                <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-3 text-sm leading-6 text-muted-foreground">
+                  {decision.horizonForecast.summary}
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </section>
 
@@ -327,6 +409,11 @@ export function BtcDecisionTerminal() {
           <CollapsibleSection
             title="Exchange diagnostics"
             description="Live exchange health, price consensus, and raw tick stream."
+            onToggle={(open) => {
+              if (open) {
+                registerPanelOpen("Exchange diagnostics")
+              }
+            }}
           >
             <div className="space-y-4">
               <Card className="border-white/10 bg-[#0c1628]/88">
@@ -468,6 +555,11 @@ export function BtcDecisionTerminal() {
           <CollapsibleSection
             title="Market regime"
             description="Regime classification, confidence, stability, and recent shifts."
+            onToggle={(open) => {
+              if (open) {
+                registerPanelOpen("Market regime")
+              }
+            }}
           >
             <Card className="border-white/10 bg-[#0c1628]/88">
               <CardHeader className="pb-3">
@@ -537,6 +629,11 @@ export function BtcDecisionTerminal() {
           <CollapsibleSection
             title="Signal suppression"
             description="Guardrail for weak, stale, contradictory, or unstable conditions."
+            onToggle={(open) => {
+              if (open) {
+                registerPanelOpen("Signal suppression")
+              }
+            }}
           >
             <Card className="border-white/10 bg-[#0c1628]/88">
               <CardHeader className="pb-2">
@@ -658,6 +755,11 @@ export function BtcDecisionTerminal() {
           <CollapsibleSection
             title="Breakout intelligence"
             description="Breakout direction, follow-through quality, and false-breakout risk."
+            onToggle={(open) => {
+              if (open) {
+                registerPanelOpen("Breakout intelligence")
+              }
+            }}
           >
             <Card className="border-white/10 bg-[#0c1628]/88">
               <CardHeader className="pb-2">
@@ -758,8 +860,211 @@ export function BtcDecisionTerminal() {
           </CollapsibleSection>
 
           <CollapsibleSection
+            title="News & social intelligence"
+            description="Recent BTC-relevant headlines and social catalysts folded into the decision engine."
+            onToggle={(open) => {
+              if (open) {
+                registerPanelOpen("News & social intelligence")
+              }
+            }}
+          >
+            <Card className="border-white/10 bg-[#0c1628]/88">
+              <CardHeader className="pb-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <CardTitle>News & Social Intelligence</CardTitle>
+                    <CardDescription>
+                      Top relevant social posts and headlines, scored for urgency and market-moving pressure.
+                    </CardDescription>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+                      {socialNews?.eventRiskState ?? "unavailable"}
+                    </Badge>
+                    <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+                      pressure {socialNews === null ? "n/a" : formatSignedScore(socialNews.pressureScore)}
+                    </Badge>
+                    <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+                      confidence impact {socialNews === null ? "n/a" : `${socialNews.confidenceImpact}/100`}
+                    </Badge>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {socialNews?.warning ? <AlertRow tone="warning" text={socialNews.warning} /> : null}
+
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <MiniStat
+                    label="Available"
+                    value={socialNews?.available ? "yes" : "no"}
+                  />
+                  <MiniStat
+                    label="Source credibility"
+                    value={`${socialNews?.sourceCredibilityScore ?? 0}/100`}
+                  />
+                  <MiniStat
+                    label="Market-moving"
+                    value={`${socialNews?.marketMovingScore ?? 0}/100`}
+                  />
+                  <MiniStat
+                    label="Top events"
+                    value={String(socialNews?.topEvents.length ?? 0)}
+                  />
+                </div>
+
+                <div className="space-y-3">
+                  {topEvents.length > 0 ? (
+                    topEvents.map((event) => (
+                      <SocialEventRow key={event.id} event={event} />
+                    ))
+                  ) : (
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-3 text-sm text-muted-foreground">
+                      No configured social or news source returned a BTC-relevant event yet.
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  <SourceStatusCard
+                    label="X"
+                    status={socialNews?.sourceStatus.x ?? null}
+                  />
+                  <SourceStatusCard
+                    label="Truth Social"
+                    status={socialNews?.sourceStatus.truthSocial ?? null}
+                  />
+                  <SourceStatusCard
+                    label="Crypto / News"
+                    status={socialNews?.sourceStatus.news ?? null}
+                  />
+                </div>
+
+                <div className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.02] p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                        Catalyst history
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        Locally saved BTC-relevant social and news events for later research.
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="border-white/10 bg-white/[0.03]"
+                        onClick={() => exportCatalystFile(catalystEntries, "csv")}
+                        disabled={catalystEntries.length === 0}
+                      >
+                        Export Catalysts CSV
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="border-white/10 bg-white/[0.03]"
+                        onClick={() => exportCatalystFile(catalystEntries, "json")}
+                        disabled={catalystEntries.length === 0}
+                      >
+                        Export Catalysts JSON
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="destructive"
+                        className="border-white/10"
+                        onClick={() => setClearCatalystDialogOpen(true)}
+                        disabled={catalystEntries.length === 0}
+                      >
+                        Clear Catalyst History
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <MiniStat label="Saved catalysts" value={formatCompactNumber(catalystEntries.length)} />
+                    <MiniStat
+                      label="Newest catalyst"
+                      value={catalystEntries[0] ? formatWallClock(catalystEntries[0].timestampMs) : "n/a"}
+                    />
+                    <MiniStat
+                      label="Top source"
+                      value={catalystEntries[0] ? formatSourceLabel(catalystEntries[0].source) : "n/a"}
+                    />
+                    <MiniStat
+                      label="Top category"
+                      value={catalystEntries[0]?.category ?? "n/a"}
+                    />
+                  </div>
+
+                  {catalystEntries.length > 0 ? (
+                    <div className="max-h-[19rem] overflow-auto rounded-2xl border border-white/10">
+                      <table className="min-w-full text-left text-xs">
+                        <thead className="sticky top-0 bg-[#08111f] text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                          <tr>
+                            <th className="px-3 py-2">Time</th>
+                            <th className="px-3 py-2">Source</th>
+                            <th className="px-3 py-2">Category</th>
+                            <th className="px-3 py-2">Sentiment</th>
+                            <th className="px-3 py-2">Urgency</th>
+                            <th className="px-3 py-2">Move</th>
+                            <th className="px-3 py-2">Cred</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {catalystEntries.slice(0, 12).map((entry) => (
+                            <tr key={entry.id} className="border-white/5">
+                              <td className="px-3 py-2 font-mono text-[11px] text-muted-foreground">
+                                {formatWallClock(entry.timestampMs)}
+                              </td>
+                              <td className="px-3 py-2 text-[11px] text-foreground">
+                                {formatSourceLabel(entry.source)}
+                              </td>
+                              <td className="px-3 py-2 text-[11px] text-foreground">
+                                {entry.category}
+                              </td>
+                              <td className="px-3 py-2 text-[11px] uppercase tracking-[0.18em] text-foreground">
+                                {entry.sentiment}
+                              </td>
+                              <td className="px-3 py-2 font-mono text-[11px] text-muted-foreground">
+                                {entry.urgency}/100
+                              </td>
+                              <td className="px-3 py-2 font-mono text-[11px] text-muted-foreground">
+                                {entry.marketMovingScore}/100
+                              </td>
+                              <td className="px-3 py-2 font-mono text-[11px] text-muted-foreground">
+                                {entry.credibilityScore}/100
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-4 text-sm text-muted-foreground">
+                      Saved catalysts will appear here once social or news events are ingested locally.
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-3 text-sm leading-6 text-muted-foreground">
+                  {socialNews?.explanation ??
+                    "Social/news intelligence is unavailable or has not returned usable BTC-relevant events yet."}
+                </div>
+              </CardContent>
+            </Card>
+          </CollapsibleSection>
+
+          <CollapsibleSection
             title="Model reliability"
             description="Market quality, decision notes, and calibration diagnostics."
+            onToggle={(open) => {
+              if (open) {
+                registerPanelOpen("Model reliability")
+              }
+            }}
           >
             <div className="space-y-4">
               <Card className="border-white/10 bg-[#0c1628]/88">
@@ -867,118 +1172,137 @@ export function BtcDecisionTerminal() {
           <CollapsibleSection
             title="Journal / research history"
             description="Snapshot history, forward outcomes, and local export controls."
+            onToggle={(open) => {
+              if (open) {
+                registerPanelOpen("Journal / research history")
+              }
+            }}
           >
-            <Card className="border-white/10 bg-[#0c1628]/88">
-              <CardHeader className="pb-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <CardTitle>Signal Performance</CardTitle>
-                    <CardDescription>
-                      Recent bias snapshots and their forward outcomes over 1m, 5m, 15m, and 1h.
-                    </CardDescription>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="border-white/10 bg-white/[0.03]"
-                      onClick={() => exportJournalFile(signalPerformance, "csv")}
-                      disabled={signalPerformance.length === 0}
-                    >
-                      Export CSV
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="border-white/10 bg-white/[0.03]"
-                      onClick={() => exportJournalFile(signalPerformance, "json")}
-                      disabled={signalPerformance.length === 0}
-                    >
-                      Export JSON
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="destructive"
-                      className="border-white/10"
-                      onClick={() => setClearDialogOpen(true)}
-                      disabled={signalPerformance.length === 0}
-                    >
-                      Clear Journal
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-3 gap-3">
-                  <MiniStat
-                    label="Tracked snapshots"
-                    value={formatCompactNumber(signalPerformance.length)}
-                  />
-                  <MiniStat
-                    label="Resolved 1m"
-                    value={formatCompactNumber(countResolved(signalPerformance, "1m"))}
-                  />
-                  <MiniStat
-                    label="Resolved 15m"
-                    value={formatCompactNumber(countResolved(signalPerformance, "15m"))}
-                  />
-                </div>
+            <div className="space-y-4">
+              <MarketWatchMonitorCard
+                entries={watchEntries}
+                currentPanel={lastOpenedPanel}
+                panelOpenCounts={panelOpenCounts}
+                isStale={isStale}
+                latestTick={latestTick}
+                regimeTransitions={regimeTransitions}
+                priceConsensus={priceConsensus}
+                reportWindowMinutes={watchReportWindowMinutes}
+                onReportWindowChange={setWatchReportWindowMinutes}
+              />
 
-                <div className="max-h-[28rem] overflow-auto rounded-2xl border border-white/10">
-                  <table className="min-w-full text-left text-xs">
-                    <thead className="sticky top-0 bg-[#08111f] text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-                      <tr>
-                        <th className="px-3 py-2">Time</th>
-                        <th className="px-3 py-2">Bias</th>
-                        <th className="px-3 py-2">Start</th>
-                        <th className="px-3 py-2">Confidence</th>
-                        <th className="px-3 py-2">1m</th>
-                        <th className="px-3 py-2">5m</th>
-                        <th className="px-3 py-2">15m</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                      {signalPerformance.length > 0 ? (
-                        signalPerformance.map((row) => (
-                          <tr key={row.id} className="border-white/5">
-                            <td className="px-3 py-2 font-mono text-[11px] text-muted-foreground">
-                              {formatWallClock(row.timestampMs)}
-                            </td>
-                            <td className="px-3 py-2 text-[11px] uppercase tracking-[0.18em] text-foreground">
-                              {formatDirectionalReadout(row)}
-                            </td>
-                            <td className="px-3 py-2 font-mono text-[11px] text-foreground">
-                              {formatCurrency(row.startingPrice, 2)}
-                            </td>
-                            <td className="px-3 py-2 font-mono text-[11px] text-foreground">
-                              {row.confidence}
-                            </td>
-                            <td className="px-3 py-2">
-                              <OutcomeCell outcome={row.outcomes["1m"]} />
-                            </td>
-                            <td className="px-3 py-2">
-                              <OutcomeCell outcome={row.outcomes["5m"]} />
-                            </td>
-                            <td className="px-3 py-2">
-                              <OutcomeCell outcome={row.outcomes["15m"]} />
+              <Card className="border-white/10 bg-[#0c1628]/88">
+                <CardHeader className="pb-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <CardTitle>Signal Performance</CardTitle>
+                      <CardDescription>
+                        Recent bias snapshots and their forward outcomes over 1m, 5m, 15m, and 1h.
+                      </CardDescription>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="border-white/10 bg-white/[0.03]"
+                        onClick={() => exportJournalFile(signalPerformance, "csv")}
+                        disabled={signalPerformance.length === 0}
+                      >
+                        Export CSV
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="border-white/10 bg-white/[0.03]"
+                        onClick={() => exportJournalFile(signalPerformance, "json")}
+                        disabled={signalPerformance.length === 0}
+                      >
+                        Export JSON
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="destructive"
+                        className="border-white/10"
+                        onClick={() => setClearDialogOpen(true)}
+                        disabled={signalPerformance.length === 0}
+                      >
+                        Clear Journal
+                      </Button>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-3 gap-3">
+                    <MiniStat
+                      label="Tracked snapshots"
+                      value={formatCompactNumber(signalPerformance.length)}
+                    />
+                    <MiniStat
+                      label="Resolved 1m"
+                      value={formatCompactNumber(countResolved(signalPerformance, "1m"))}
+                    />
+                    <MiniStat
+                      label="Resolved 15m"
+                      value={formatCompactNumber(countResolved(signalPerformance, "15m"))}
+                    />
+                  </div>
+
+                  <div className="max-h-[28rem] overflow-auto rounded-2xl border border-white/10">
+                    <table className="min-w-full text-left text-xs">
+                      <thead className="sticky top-0 bg-[#08111f] text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                        <tr>
+                          <th className="px-3 py-2">Time</th>
+                          <th className="px-3 py-2">Bias</th>
+                          <th className="px-3 py-2">Start</th>
+                          <th className="px-3 py-2">Confidence</th>
+                          <th className="px-3 py-2">1m</th>
+                          <th className="px-3 py-2">5m</th>
+                          <th className="px-3 py-2">15m</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5">
+                        {signalPerformance.length > 0 ? (
+                          signalPerformance.map((row) => (
+                            <tr key={row.id} className="border-white/5">
+                              <td className="px-3 py-2 font-mono text-[11px] text-muted-foreground">
+                                {formatWallClock(row.timestampMs)}
+                              </td>
+                              <td className="px-3 py-2 text-[11px] uppercase tracking-[0.18em] text-foreground">
+                                {formatDirectionalReadout(row)}
+                              </td>
+                              <td className="px-3 py-2 font-mono text-[11px] text-foreground">
+                                {formatCurrency(row.startingPrice, 2)}
+                              </td>
+                              <td className="px-3 py-2 font-mono text-[11px] text-foreground">
+                                {row.confidence}
+                              </td>
+                              <td className="px-3 py-2">
+                                <OutcomeCell outcome={row.outcomes["1m"]} />
+                              </td>
+                              <td className="px-3 py-2">
+                                <OutcomeCell outcome={row.outcomes["5m"]} />
+                              </td>
+                              <td className="px-3 py-2">
+                                <OutcomeCell outcome={row.outcomes["15m"]} />
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={7} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                              Waiting for the first live bias snapshot.
                             </td>
                           </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={7} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                            Waiting for the first live bias snapshot.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </CardContent>
-            </Card>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </CollapsibleSection>
         </div>
 
@@ -1008,6 +1332,40 @@ export function BtcDecisionTerminal() {
                 }}
               >
                 Clear Journal
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={clearCatalystDialogOpen}
+          onOpenChange={setClearCatalystDialogOpen}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Clear catalyst history?</DialogTitle>
+              <DialogDescription>
+                This removes the locally stored BTC social/news catalyst history from this
+                browser. The live feed and current analysis remain untouched.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setClearCatalystDialogOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={() => {
+                  clearCatalystHistory()
+                  setClearCatalystDialogOpen(false)
+                }}
+              >
+                Clear Catalyst History
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -1123,17 +1481,113 @@ function AlertRow({
   )
 }
 
+function SocialEventRow({ event }: { event: BtcScoredMarketEvent }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+              {formatSourceLabel(event.source)}
+            </Badge>
+            <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+              {event.category}
+            </Badge>
+            <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+              {event.sentiment}
+            </Badge>
+          </div>
+          <div className="truncate text-sm font-medium text-foreground">{event.title}</div>
+          <div className="text-sm leading-6 text-muted-foreground">{event.explanation}</div>
+        </div>
+        <div className="grid shrink-0 gap-2 text-right font-mono text-[11px] text-muted-foreground">
+          <div>urgency {event.urgency}/100</div>
+          <div>move {event.marketMovingScore}/100</div>
+          <div>cred {event.credibilityScore}/100</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SourceStatusCard({
+  label,
+  status,
+}: {
+  label: string
+  status:
+    | BtcSocialNewsSourceStatus["x"]
+    | BtcSocialNewsSourceStatus["truthSocial"]
+    | BtcSocialNewsSourceStatus["news"]
+    | null
+}) {
+  if (!status) {
+    return (
+      <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-3 text-sm text-muted-foreground">
+        {label} unavailable
+      </div>
+    )
+  }
+
+  if ("cryptopanic" in status) {
+    return (
+      <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-3">
+        <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">{label}</div>
+        <div className="mt-1 flex flex-wrap gap-2">
+          <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+            CryptoPanic {status.cryptopanic.enabled ? "on" : "off"} ({status.cryptopanic.itemCount})
+          </Badge>
+          <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+            NewsAPI {status.newsapi.enabled ? "on" : "off"} ({status.newsapi.itemCount})
+          </Badge>
+        </div>
+        <div className="mt-2 text-xs leading-5 text-muted-foreground">
+          {status.cryptopanic.warning ?? status.newsapi.warning ?? "News sources are ready."}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-3">
+      <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">{label}</div>
+      <div className="mt-1 flex items-center justify-between gap-3">
+        <Badge
+          variant="outline"
+          className={cn(
+            "border-white/10",
+            status.enabled
+              ? "bg-emerald-500/10 text-emerald-200"
+              : "bg-slate-500/10 text-slate-200",
+          )}
+        >
+          {status.enabled ? "enabled" : "disabled"}
+        </Badge>
+        <span className="font-mono text-xs text-muted-foreground">{status.itemCount} items</span>
+      </div>
+      <div className="mt-2 text-xs leading-5 text-muted-foreground">
+        {status.warning ?? "Source is ready."}
+      </div>
+    </div>
+  )
+}
+
 function CollapsibleSection({
   title,
   description,
   children,
+  onToggle,
 }: {
   title: string
   description: string
   children: ReactNode
+  onToggle?: (open: boolean) => void
 }) {
   return (
-    <details className="rounded-3xl border border-white/10 bg-[#0c1628]/88">
+    <details
+      className="rounded-3xl border border-white/10 bg-[#0c1628]/88"
+      onToggle={(event) => onToggle?.(event.currentTarget.open)}
+    >
       <summary className="cursor-pointer list-none px-5 py-4 outline-none transition-colors hover:bg-white/[0.02] focus-visible:bg-white/[0.02] focus-visible:outline-none">
         <div className="flex items-center justify-between gap-4">
           <div>
@@ -1425,6 +1879,782 @@ function MarketRegimeTimeline({
       </div>
     </div>
   )
+}
+
+function MarketWatchMonitorCard({
+  entries,
+  currentPanel,
+  panelOpenCounts,
+  isStale,
+  latestTick,
+  regimeTransitions,
+  priceConsensus,
+  reportWindowMinutes,
+  onReportWindowChange,
+}: {
+  entries: BtcMarketWatchEntry[]
+  currentPanel: string
+  panelOpenCounts: Record<string, number>
+  isStale: boolean
+  latestTick: RealtimeBtcTick | null
+  regimeTransitions: BtcRegimeTransition[]
+  priceConsensus: BtcPriceConsensus
+  reportWindowMinutes: 30 | 60
+  onReportWindowChange: (minutes: 30 | 60) => void
+}) {
+  const summary = useMemo(
+    () =>
+      buildWatchMonitorSummary({
+        entries,
+        currentPanel,
+        panelOpenCounts,
+        isStale,
+        latestTick,
+        regimeTransitions,
+        priceConsensus,
+        reportWindowMinutes,
+      }),
+    [
+      currentPanel,
+      entries,
+      panelOpenCounts,
+      isStale,
+      latestTick,
+      priceConsensus,
+      reportWindowMinutes,
+      regimeTransitions,
+    ],
+  )
+
+  return (
+    <Card className="border-white/10 bg-[#0c1628]/88">
+      <CardHeader className="pb-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <CardTitle>Market Watch Monitor</CardTitle>
+            <CardDescription>
+              Active while this tab stays open. Persists one local snapshot per minute.
+            </CardDescription>
+          </div>
+          <Badge variant="outline" className={cn("border-white/10", watchMonitorTone(summary.status))}>
+            {summary.status}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap gap-2">
+          <TogglePill
+            active={reportWindowMinutes === 30}
+            onClick={() => onReportWindowChange(30)}
+          >
+            Last 30 min
+          </TogglePill>
+          <TogglePill
+            active={reportWindowMinutes === 60}
+            onClick={() => onReportWindowChange(60)}
+          >
+            Last 60 min
+          </TogglePill>
+        </div>
+
+        <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-3 font-mono text-[11px] uppercase tracking-[0.18em] text-slate-200">
+          WATCH: {summary.status.toUpperCase()} | WINDOW: {summary.windowLabel.toUpperCase()} | LOGGED:{" "}
+          {formatCompactNumber(summary.sampleCount)} | LAST: {summary.lastSampleLabel}
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <MiniStat label="Direction match" value={summary.directionMatch} />
+          <MiniStat label="Suppression in chop" value={summary.suppressionInChop} />
+          <MiniStat label="Regime shifts" value={summary.regimeShift} />
+          <MiniStat label="False-breakout warnings" value={summary.falseBreakoutWarnings} />
+          <MiniStat label="Average confidence" value={summary.averageConfidence} />
+          <MiniStat label="Confidence fit" value={summary.confidenceFit} />
+          <MiniStat label="Chart health" value={summary.chartSmoothness} />
+          <MiniStat label="Most-used panel" value={summary.mostUsedPanel} />
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
+          <div className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.02] p-3">
+            <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+              Watch verdict
+            </div>
+            <div className="text-sm leading-6 text-foreground">{summary.primaryNote}</div>
+            <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-3 text-sm leading-6 text-muted-foreground">
+              {summary.reportText}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {summary.notes.map((note) => (
+                <Badge key={note} variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+                  {note}
+                </Badge>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2 rounded-2xl border border-white/10 bg-white/[0.02] p-3">
+            <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+              Latest local snapshots
+            </div>
+            {summary.recentEntries.length > 0 ? (
+              <div className="space-y-2">
+                {summary.recentEntries.map((entry) => (
+                  <div
+                    key={entry.id}
+                    className="grid grid-cols-[1fr_auto_auto] gap-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-mono text-[11px] text-slate-200"
+                  >
+                    <div className="space-y-1">
+                      <div>{formatWallClock(entry.timestampMs)}</div>
+                      <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                        {entry.directionReadout} | {entry.marketState.state} | {entry.regime.primaryRegime}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div>{formatCurrency(entry.price, 2)}</div>
+                      <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                        {entry.confidence}/100
+                      </div>
+                    </div>
+                    <div className="text-right text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                      {entry.suppressionLevel}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-4 text-sm text-muted-foreground">
+                Waiting for the first local monitor snapshot.
+              </div>
+            )}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function buildWatchMonitorSummary({
+  entries,
+  currentPanel,
+  panelOpenCounts,
+  isStale,
+  latestTick,
+  regimeTransitions,
+  priceConsensus,
+  reportWindowMinutes,
+}: {
+  entries: BtcMarketWatchEntry[]
+  currentPanel: string
+  panelOpenCounts: Record<string, number>
+  isStale: boolean
+  latestTick: RealtimeBtcTick | null
+  regimeTransitions: BtcRegimeTransition[]
+  priceConsensus: BtcPriceConsensus
+  reportWindowMinutes: 30 | 60
+}) {
+  const ordered = [...entries].sort((left, right) => left.timestampMs - right.timestampMs)
+  const windowEntries = selectWatchEntriesWithinWindow(ordered, reportWindowMinutes)
+  const sampleCount = windowEntries.length
+  const lastEntry = windowEntries.at(-1) ?? ordered.at(-1) ?? null
+  const lastSampleLabel = lastEntry ? formatWallClock(lastEntry.timestampMs) : "warming"
+
+  const directionStats = calculateDirectionMatchStats(windowEntries)
+  const suppressionStats = calculateSuppressionStats(windowEntries)
+  const regimeStats = calculateRegimeShiftStats(windowEntries, regimeTransitions)
+  const breakoutStats = calculateFalseBreakoutStats(windowEntries)
+  const averageConfidence = calculateAverageConfidence(windowEntries)
+  const confidenceStats = calculateConfidenceFitStats(
+    windowEntries,
+    directionStats.matchRate,
+    averageConfidence,
+  )
+  const chartStats = calculateChartSmoothnessStats(windowEntries, isStale)
+  const feedStats = calculateFeedContinuityStats(priceConsensus, latestTick)
+  const mostUsedPanel = determineMostUsedPanel(panelOpenCounts, currentPanel)
+  const windowLabel = `last ${reportWindowMinutes} min`
+  const status =
+    sampleCount === 0
+      ? "warming"
+      : isStale || feedStats.activeExchangeCount === 0
+        ? "offline"
+        : suppressionStats.suppressionRate > 0.6 || regimeStats.frequentTransitions
+          ? "unstable"
+          : directionStats.matchRate >= 0.6 && feedStats.activeExchangeCount > 0
+            ? "active"
+            : "watching"
+
+  const reportText = buildWatchReportText({
+    directionStats,
+    suppressionStats,
+    regimeStats,
+    breakoutStats,
+    confidenceStats,
+    chartStats,
+    status,
+  })
+
+  const mainObservedWeakness = buildWatchWeaknessText({
+    directionStats,
+    suppressionStats,
+    regimeStats,
+    breakoutStats,
+    confidenceStats,
+    chartStats,
+  })
+
+  const notes = Array.from(
+    new Set(
+      [
+        `Window: ${windowLabel}`,
+        directionStats.summary,
+        suppressionStats.summary,
+        regimeStats.summary,
+        breakoutStats.summary,
+        confidenceStats.summary,
+        chartStats.summary,
+        feedStats.summary,
+        reportText,
+        mainObservedWeakness,
+      ].filter((note): note is string => Boolean(note)),
+    ),
+  )
+
+  return {
+    status,
+    sampleCount,
+    lastSampleLabel,
+    windowLabel,
+    directionMatch: `${formatPercent(directionStats.matchRate * 100, 1)} ${directionStats.label}`,
+    suppressionInChop: `${suppressionStats.suppressedCount}/${suppressionStats.chopCount} (${formatPercent(suppressionStats.suppressionRate * 100, 1)})`,
+    regimeShift: `${regimeStats.changeCount}`,
+    falseBreakoutWarnings: `${breakoutStats.warningCount}`,
+    averageConfidence:
+      averageConfidence === null ? "n/a" : `${averageConfidence.toFixed(1)}/100`,
+    confidenceFit: confidenceStats.label,
+    chartSmoothness: chartStats.label,
+    mostUsedPanel,
+    primaryNote:
+      sampleCount > 0
+        ? reportText
+        : "Local watch monitor is warming up and will populate once minute snapshots are recorded.",
+    reportText,
+    mainObservedWeakness,
+    notes,
+    recentEntries: windowEntries.slice(-6).reverse(),
+  }
+}
+
+function calculateDirectionMatchStats(entries: BtcMarketWatchEntry[]) {
+  if (entries.length < 2) {
+    return {
+      label: "warming",
+      matchRate: 0,
+      comparableCount: 0,
+      summary: "Not enough minute snapshots yet to compare direction readouts with visible price behavior.",
+    }
+  }
+
+  const thresholdPct = 0.03
+  let matched = 0
+  let comparable = 0
+
+  for (let index = 0; index < entries.length - 1; index += 1) {
+    const current = entries[index]
+    const next = entries[index + 1]
+    const movePct = current.price === 0 ? 0 : ((next.price - current.price) / current.price) * 100
+    const moveState =
+      Math.abs(movePct) < thresholdPct ? "neutral" : movePct > 0 ? "bullish" : "bearish"
+    const readout = current.directionReadout.toLowerCase()
+
+    if (readout.includes("suppressed")) {
+      continue
+    }
+
+    comparable += 1
+
+    const isMatch =
+      (moveState === "bullish" && readout.includes("bullish")) ||
+      (moveState === "bearish" && readout.includes("bearish")) ||
+      (moveState === "neutral" && readout.includes("neutral"))
+
+    if (isMatch) {
+      matched += 1
+    }
+  }
+
+  const matchRate = comparable > 0 ? matched / comparable : 0
+  const label =
+    matchRate >= 0.65 ? "aligned" : matchRate >= 0.45 ? "mixed" : "mismatched"
+
+  return {
+    label,
+    matchRate,
+    comparableCount: comparable,
+    summary:
+      comparable > 0
+        ? `Direction reads were ${label} with visible minute-by-minute price behavior across ${comparable} comparable snapshots.`
+        : "Direction reads were not comparable yet because the monitor mostly recorded suppressed or neutral states.",
+  }
+}
+
+function calculateSuppressionStats(entries: BtcMarketWatchEntry[]) {
+  const chopEntries = entries.filter((entry) =>
+    entry.marketState.state === "noisy" ||
+    entry.marketState.state === "unstable" ||
+    entry.regime.primaryRegime === "choppy / noisy" ||
+    entry.marketQuality.noiseLevel >= 60,
+  )
+  const suppressedInChop = chopEntries.filter(
+    (entry) => entry.suppressionLevel !== "none",
+  ).length
+  const suppressedInChopRatio =
+    chopEntries.length > 0 ? suppressedInChop / chopEntries.length : 0
+
+  const label =
+    chopEntries.length === 0
+      ? "warming"
+      : suppressedInChopRatio >= 0.6
+        ? "active"
+        : suppressedInChopRatio > 0
+          ? "partial"
+          : "missing"
+
+  return {
+    label,
+    suppressedCount: suppressedInChop,
+    chopCount: chopEntries.length,
+    suppressionRate: suppressedInChopRatio,
+    suppressedInChopRatio,
+    summary:
+      chopEntries.length > 0
+        ? `Suppression activated in ${suppressedInChop}/${chopEntries.length} noisy or unstable snapshots.`
+        : "No noisy or unstable snapshots were recorded yet, so suppression behavior has not been stressed.",
+  }
+}
+
+function calculateRegimeShiftStats(
+  entries: BtcMarketWatchEntry[],
+  regimeTransitions: BtcRegimeTransition[],
+) {
+  if (entries.length < 2) {
+    return {
+      label: "warming",
+      frequentTransitions: false,
+      changeCount: 0,
+      summary: "Regime history is still warming up.",
+    }
+  }
+
+  const regimeChanges = countRegimeChanges(entries)
+  const frequentTransitions = regimeTransitions.length >= 4 || regimeChanges >= 4
+  const label =
+    regimeChanges === 0
+      ? "stable"
+      : regimeChanges >= 4
+        ? "frequent"
+        : "occasional"
+
+  return {
+    label,
+    frequentTransitions,
+    changeCount: regimeChanges,
+    summary:
+      regimeChanges > 0
+        ? `Observed ${regimeChanges} regime change${regimeChanges === 1 ? "" : "s"} across the local watch window.`
+        : "The regime stayed stable across the local watch window.",
+  }
+}
+
+function calculateFalseBreakoutStats(entries: BtcMarketWatchEntry[]) {
+  if (entries.length < 2) {
+    return {
+      label: "warming",
+      warningCount: 0,
+      summary: "False-breakout checks will populate after the monitor has a few snapshots.",
+    }
+  }
+
+  let checks = 0
+  let aligned = 0
+  let warningCount = 0
+
+  for (let index = 0; index < entries.length - 1; index += 1) {
+    const current = entries[index]
+    const next = entries[index + 1]
+    const breakoutDirection = current.falseBreakout.breakoutDirection
+    if (current.falseBreakout.warning !== null) {
+      warningCount += 1
+    }
+    if (breakoutDirection === "none" || current.falseBreakout.breakoutStatus === "ambiguous") {
+      continue
+    }
+
+    checks += 1
+    const movePct = current.price === 0 ? 0 : ((next.price - current.price) / current.price) * 100
+    const reversed =
+      (breakoutDirection === "up" && movePct < -0.03) ||
+      (breakoutDirection === "down" && movePct > 0.03)
+
+    if (reversed) {
+      aligned += 1
+    }
+  }
+
+  const ratio = checks > 0 ? aligned / checks : 0
+  const label =
+    checks === 0 ? "warming" : ratio >= 0.6 ? "good" : ratio >= 0.35 ? "mixed" : "weak"
+
+  return {
+    label,
+    warningCount,
+    summary:
+      checks > 0
+        ? `False-breakout warnings lined up with ${aligned}/${checks} subsequent reversal-style moves.`
+        : "False-breakout warnings have not produced enough comparable follow-through yet.",
+  }
+}
+
+function calculateConfidenceFitStats(
+  entries: BtcMarketWatchEntry[],
+  matchRate: number,
+  averageConfidence: number | null,
+) {
+  if (entries.length < 2) {
+    return {
+      label: "warming",
+      averageConfidence,
+      summary: "Confidence calibration will appear after more snapshots resolve.",
+    }
+  }
+
+  const label =
+    averageConfidence !== null && averageConfidence >= 70 && matchRate < 0.45
+      ? "hot"
+      : averageConfidence !== null && averageConfidence <= 55 && matchRate >= 0.55
+        ? "conservative"
+        : "balanced"
+
+  return {
+    label,
+    averageConfidence,
+    summary:
+      label === "hot"
+        ? "Confidence is reading a bit hot relative to short-window price movement."
+        : label === "conservative"
+          ? "Confidence is conservative relative to the price response."
+          : "Confidence and short-window price movement look roughly balanced.",
+  }
+}
+
+function calculateChartSmoothnessStats(
+  entries: BtcMarketWatchEntry[],
+  isStale: boolean,
+) {
+  if (entries.length < 2) {
+    return {
+      label: "warming",
+      updateHealth: "warming",
+      summary: "Chart smoothness will be easier to judge after a few more snapshots.",
+    }
+  }
+
+  const intervals = entries
+    .slice(0, -1)
+    .map((entry, index) => Math.abs(entry.timestampMs - entries[index + 1].timestampMs))
+  const regularIntervals = intervals.filter((value) => value >= 40_000 && value <= 90_000).length
+  const ratio = intervals.length > 0 ? regularIntervals / intervals.length : 0
+  const label =
+    isStale ? "stale" : ratio >= 0.75 ? "smooth" : ratio >= 0.5 ? "mixed" : "uneven"
+
+  return {
+    label,
+    updateHealth: label,
+    summary:
+      isStale
+        ? "Chart updates are currently stale."
+        : ratio >= 0.75
+          ? "Chart updates are flowing smoothly at roughly minute cadence."
+          : "Chart updates are arriving, but the cadence is uneven.",
+  }
+}
+
+function calculateFeedContinuityStats(
+  priceConsensus: BtcPriceConsensus,
+  latestTick: RealtimeBtcTick | null,
+) {
+  const activeExchangeCount = priceConsensus.activeExchangeCount
+  const staleExchangeCount = priceConsensus.staleExchangeCount
+  const label =
+    activeExchangeCount === 0
+      ? "offline"
+      : staleExchangeCount > 0
+        ? "mixed"
+        : "live"
+
+  return {
+    label,
+    activeExchangeCount,
+    summary:
+      activeExchangeCount > 0
+        ? `${activeExchangeCount}/${priceConsensus.totalExchangeCount} exchanges are active. Consensus price is ${formatCurrency(priceConsensus.consolidatedPrice, 2)} and latest tick is ${latestTick ? formatMillisecondTime(latestTick.exchangeTimeMs) : "n/a"}.`
+        : "No active exchange feeds are available right now.",
+  }
+}
+
+function selectWatchEntriesWithinWindow(
+  entries: BtcMarketWatchEntry[],
+  reportWindowMinutes: 30 | 60,
+) {
+  if (entries.length === 0) {
+    return []
+  }
+
+  const latestTimestamp = entries.at(-1)?.timestampMs ?? Date.now()
+  const windowStartMs = latestTimestamp - reportWindowMinutes * 60_000
+  return entries.filter((entry) => entry.timestampMs >= windowStartMs)
+}
+
+function calculateAverageConfidence(entries: BtcMarketWatchEntry[]) {
+  if (entries.length === 0) {
+    return null
+  }
+
+  const total = entries.reduce((sum, entry) => sum + entry.confidence, 0)
+  return total / entries.length
+}
+
+function determineMostUsedPanel(
+  panelOpenCounts: Record<string, number>,
+  currentPanel: string,
+) {
+  const entries = Object.entries(panelOpenCounts)
+  if (entries.length === 0) {
+    return currentPanel || "Decision Snapshot"
+  }
+
+  const [panelName] = entries.sort((left, right) => right[1] - left[1])[0] ?? []
+  return panelName ?? (currentPanel || "Decision Snapshot")
+}
+
+function TogglePill({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "rounded-full border px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.18em] transition-colors",
+        active
+          ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
+          : "border-white/10 bg-white/[0.03] text-slate-300 hover:border-white/25 hover:bg-white/[0.05]",
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
+function buildWatchReportText({
+  directionStats,
+  suppressionStats,
+  regimeStats,
+  breakoutStats,
+  confidenceStats,
+  chartStats,
+  status,
+}: {
+  directionStats: ReturnType<typeof calculateDirectionMatchStats>
+  suppressionStats: ReturnType<typeof calculateSuppressionStats>
+  regimeStats: ReturnType<typeof calculateRegimeShiftStats>
+  breakoutStats: ReturnType<typeof calculateFalseBreakoutStats>
+  confidenceStats: ReturnType<typeof calculateConfidenceFitStats>
+  chartStats: ReturnType<typeof calculateChartSmoothnessStats>
+  status: string
+}) {
+  if (status === "offline") {
+    return "Feed continuity was weak during the window, so the report stays cautious."
+  }
+
+  if (regimeStats.changeCount >= 4) {
+    return "Regime shifted frequently, suggesting unstable interpretation."
+  }
+
+  if (suppressionStats.suppressionRate >= 0.5) {
+    return "Suppression triggered too often."
+  }
+
+  if (
+    directionStats.matchRate >= 0.6 &&
+    confidenceStats.label !== "hot" &&
+    chartStats.label !== "uneven" &&
+    breakoutStats.warningCount <= 2
+  ) {
+    return "The model was mostly stable."
+  }
+
+  if (breakoutStats.warningCount >= 3) {
+    return "Breakout conditions stayed fragile through the window."
+  }
+
+  if (chartStats.label === "uneven") {
+    return "Chart updates were uneven enough to make the read less dependable."
+  }
+
+  return "The model was mixed: usable, but not clean enough to treat as steady."
+}
+
+function buildWatchWeaknessText({
+  directionStats,
+  suppressionStats,
+  regimeStats,
+  breakoutStats,
+  confidenceStats,
+  chartStats,
+}: {
+  directionStats: ReturnType<typeof calculateDirectionMatchStats>
+  suppressionStats: ReturnType<typeof calculateSuppressionStats>
+  regimeStats: ReturnType<typeof calculateRegimeShiftStats>
+  breakoutStats: ReturnType<typeof calculateFalseBreakoutStats>
+  confidenceStats: ReturnType<typeof calculateConfidenceFitStats>
+  chartStats: ReturnType<typeof calculateChartSmoothnessStats>
+}) {
+  if (regimeStats.changeCount >= 4) {
+    return "Regime shifted frequently, suggesting unstable interpretation."
+  }
+
+  if (suppressionStats.suppressionRate >= 0.5) {
+    return "Suppression triggered too often."
+  }
+
+  if (directionStats.matchRate < 0.45) {
+    return "Direction read struggled to track visible price behavior."
+  }
+
+  if (breakoutStats.warningCount >= 3) {
+    return "Breakout warnings were frequent, so follow-through looked fragile."
+  }
+
+  if (confidenceStats.label === "hot") {
+    return "Confidence looked a little too high for the amount of stability on screen."
+  }
+
+  if (chartStats.label === "uneven") {
+    return "Chart update cadence was uneven."
+  }
+
+  return "No major weakness stood out."
+}
+
+function countRegimeChanges(entries: BtcMarketWatchEntry[]) {
+  if (entries.length < 2) {
+    return 0
+  }
+
+  let changes = 0
+  for (let index = 0; index < entries.length - 1; index += 1) {
+    if (entries[index].regime.primaryRegime !== entries[index + 1].regime.primaryRegime) {
+      changes += 1
+    }
+  }
+
+  return changes
+}
+
+function watchMonitorTone(status: string) {
+  if (status === "active") {
+    return "bg-emerald-500/10 text-emerald-200"
+  }
+
+  if (status === "watching") {
+    return "bg-sky-500/10 text-sky-200"
+  }
+
+  if (status === "unstable") {
+    return "bg-amber-500/10 text-amber-200"
+  }
+
+  if (status === "offline") {
+    return "bg-rose-500/10 text-rose-200"
+  }
+
+  return "bg-white/[0.03] text-slate-300"
+}
+
+const FORECAST_HORIZONS: BtcForecastHorizon[] = ["15m", "30m", "1h"]
+
+function ForwardOutlookCard({
+  forecast,
+}: {
+  forecast: BtcHorizonForecast
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-xs uppercase tracking-[0.24em] text-muted-foreground">
+          {forecast.horizon}
+        </div>
+        <Badge variant="outline" className={cn("border-white/10", forecastTone(forecast.directionalOutlook))}>
+          {forecast.directionalOutlook}
+        </Badge>
+      </div>
+
+      <div className="mt-3 grid gap-2">
+        <MiniStat label="Confidence" value={`${forecast.confidence}/100`} />
+        <MiniStat label="Expected volatility" value={forecast.expectedVolatility} />
+        <MiniStat label="Expected stability" value={forecast.expectedStability} />
+        <MiniStat
+          label="Continuation / reversal"
+          value={`${forecast.breakoutContinuationProbability}% / ${forecast.reversalProbability}%`}
+        />
+        <MiniStat label="Suppression risk" value={`${forecast.suppressionRisk}%`} />
+        <MiniStat label="Forecast quality" value={`${forecast.forecastQuality}/100`} />
+        <MiniStat label="Forecast stability" value={`${forecast.forecastStability}/100`} />
+      </div>
+
+      <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 px-3 py-3 text-sm leading-6 text-foreground">
+        {forecast.explanation}
+      </div>
+
+      <div className="mt-3 space-y-2">
+        <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+          Supporting factors
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {forecast.mainSupportingFactors.map((factor) => (
+            <Badge key={factor} variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+              {factor}
+            </Badge>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-3 text-sm leading-6 text-muted-foreground">
+        {forecast.mainInvalidationCondition}
+      </div>
+    </div>
+  )
+}
+
+function forecastTone(outlook: BtcForecastOutlook) {
+  if (outlook === "bullish") {
+    return "bg-emerald-500/10 text-emerald-200"
+  }
+
+  if (outlook === "bearish") {
+    return "bg-rose-500/10 text-rose-200"
+  }
+
+  if (outlook === "neutral") {
+    return "bg-sky-500/10 text-sky-200"
+  }
+
+  return "bg-amber-500/10 text-amber-200"
 }
 
 function LegendPill({
@@ -1844,6 +3074,29 @@ function formatSignedPercentValue(value: number) {
   return formatSignedPercent(value)
 }
 
+function formatSignedScore(value: number) {
+  if (!Number.isFinite(value)) {
+    return "n/a"
+  }
+
+  return `${value >= 0 ? "+" : ""}${value.toFixed(Math.abs(value) < 10 ? 1 : 0)}`
+}
+
+function formatSourceLabel(value: string) {
+  switch (value) {
+    case "x":
+      return "X"
+    case "truth_social":
+      return "Truth Social"
+    case "cryptopanic":
+      return "CryptoPanic"
+    case "newsapi":
+      return "NewsAPI"
+    default:
+      return value
+  }
+}
+
 function formatPercentOrNA(value: number | null, digits = 2) {
   if (value === null || Number.isNaN(value)) {
     return "n/a"
@@ -1869,6 +3122,26 @@ function exportJournalFile(
   const anchor = document.createElement("a")
   anchor.href = url
   anchor.download = `btc-decision-journal.${format}`
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
+function exportCatalystFile(
+  entries: BtcCatalystHistoryEntry[],
+  format: "csv" | "json",
+) {
+  const content =
+    format === "csv"
+      ? exportBtcCatalystHistoryAsCsv(entries)
+      : exportBtcCatalystHistoryAsJson(entries)
+
+  const blob = new Blob([content], {
+    type: format === "csv" ? "text/csv;charset=utf-8" : "application/json;charset=utf-8",
+  })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement("a")
+  anchor.href = url
+  anchor.download = `btc-catalyst-history.${format}`
   anchor.click()
   URL.revokeObjectURL(url)
 }
