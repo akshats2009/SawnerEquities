@@ -14,9 +14,9 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: "Sawner Equities",
+  title: "Sawner Equities | BTC Decision Engine",
   description:
-    "Professional BTC probability dashboard for Kalshi market analysis, risk review, and manual journaling.",
+    "Real-time BTC price decision engine for live market monitoring, short-term analytics, and research-oriented direction reads.",
 }
 
 export default function RootLayout({
