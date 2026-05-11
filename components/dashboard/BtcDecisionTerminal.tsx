@@ -53,7 +53,7 @@ import type {
   BtcScoredMarketEvent,
   BtcSocialNewsSourceStatus,
 } from "@/lib/sentiment/eventScoring"
-import { BtcCandlestickChart } from "@/components/dashboard/BtcCandlestickChart"
+import { TradingViewBtcChart } from "@/components/dashboard/TradingViewBtcChart"
 import type { BtcJournalRow, BtcJournalOutcome } from "@/lib/btc/journal-types"
 
 export function BtcDecisionTerminal() {
@@ -223,18 +223,18 @@ export function BtcDecisionTerminal() {
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <CardTitle>BTC Candlestick</CardTitle>
+                <CardTitle>BTC Chart</CardTitle>
                 <CardDescription>
-                  Consolidated multi-exchange price action, aggregated into live OHLC candles.
+                  Live TradingView chart — COINBASE:BTCUSD, 1-minute default.
                 </CardDescription>
               </div>
               <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
-                {priceConsensus.activeExchangeCount}/{priceConsensus.totalExchangeCount} active
+                TradingView
               </Badge>
             </div>
           </CardHeader>
-          <CardContent>
-            <BtcCandlestickChart ticks={ticks} />
+          <CardContent className="p-0">
+            <TradingViewBtcChart />
           </CardContent>
         </Card>
 
