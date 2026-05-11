@@ -540,36 +540,34 @@ export function BtcDecisionTerminal() {
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-3">
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
-                    <Badge
-                      variant="outline"
-                      className={cn(
-                        "border-white/10",
-                        decision.signalSuppression.level === "none"
-                          ? "bg-emerald-500/10 text-emerald-200"
-                          : decision.signalSuppression.level === "caution"
-                            ? "bg-amber-500/10 text-amber-200"
-                            : decision.signalSuppression.level === "suppress directional bias"
-                              ? "bg-rose-500/10 text-rose-200"
-                              : "bg-slate-500/10 text-slate-200",
-                      )}
-                    >
-                      {decision.signalSuppression.level}
-                    </Badge>
-                    <span className="font-mono text-xs uppercase tracking-[0.22em] text-slate-200">
-                      {decision.signalSuppression.directionalReadout}
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-2 font-mono text-[11px] uppercase tracking-[0.22em] text-slate-200">
+                    <span className={cn(
+                      "rounded border px-2 py-1",
+                      decision.signalSuppression.level === "none"
+                        ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
+                        : decision.signalSuppression.level === "caution"
+                          ? "border-amber-500/20 bg-amber-500/10 text-amber-200"
+                          : decision.signalSuppression.level === "suppress directional bias"
+                            ? "border-rose-500/20 bg-rose-500/10 text-rose-200"
+                            : "border-slate-500/20 bg-slate-500/10 text-slate-200",
+                    )}>
+                      SUPPRESSION: {decision.signalSuppression.level}
                     </span>
-                    <span className="text-muted-foreground">
-                      top reason: {decision.signalSuppression.reasons[0] ?? "none"}
+                    <span className="text-white/30">|</span>
+                    <span className="rounded border border-white/10 bg-white/[0.03] px-2 py-1">
+                      REASON: {decision.signalSuppression.reasons[0] ?? "NONE"}
                     </span>
-                    <span className="text-muted-foreground">
-                      impact: -{decision.signalSuppression.confidencePenalty}
+                    <span className="text-white/30">|</span>
+                    <span className="rounded border border-white/10 bg-white/[0.03] px-2 py-1">
+                      CONF Δ: -{decision.signalSuppression.confidencePenalty}%
                     </span>
-                    <span className="text-muted-foreground">
-                      override: {signalSuppressionOverrideEnabled ? "on" : "off"}
+                    <span className="text-white/30">|</span>
+                    <span className="rounded border border-white/10 bg-white/[0.03] px-2 py-1">
+                      OVERRIDE: {signalSuppressionOverrideEnabled ? "ON" : "OFF"}
                     </span>
-                    <span className="text-muted-foreground">
-                      snapshot guard: {decision.signalSuppression.shouldSuppressSnapshot ? "blocked" : "open"}
+                    <span className="text-white/30">|</span>
+                    <span className="rounded border border-white/10 bg-white/[0.03] px-2 py-1">
+                      GUARD: {decision.signalSuppression.shouldSuppressSnapshot ? "BLOCKED" : "OPEN"}
                     </span>
                   </div>
 
