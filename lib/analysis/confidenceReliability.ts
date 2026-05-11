@@ -33,6 +33,8 @@ export interface ConfidenceThresholdDiagnostics {
 export interface ConfidenceReliabilityDiagnostics {
   selectedWindow: ConfidenceReliabilityWindow
   totalResolvedCount: number
+  qualifiedResolvedCount: number
+  excludedLowQualityCount: number
   sampleSizeWarning: string | null
   summary: {
     hitRate: number | null
@@ -49,6 +51,7 @@ interface ConfidenceObservation {
   bias: BtcDirectionBias
   percentChange: number
   directionallyCorrect: boolean
+  signalQualityScore: number
 }
 
 const CONFIDENCE_BUCKETS: Array<{
@@ -78,9 +81,16 @@ export function buildConfidenceReliabilityDiagnostics(
 ): ConfidenceReliabilityDiagnostics {
   const observations = flattenResolvedObservations(signalPerformance, selectedWindow)
   const totalResolvedCount = observations.length
+  const qualifiedObservations = observations.filter(
+    (observation) => observation.signalQualityScore >= 55,
+  )
+  const effectiveObservations =
+    qualifiedObservations.length > 0 ? qualifiedObservations : observations
+  const qualifiedResolvedCount = qualifiedObservations.length
+  const excludedLowQualityCount = totalResolvedCount - qualifiedResolvedCount
   const sampleSizeWarning =
-    totalResolvedCount < MIN_SAMPLE_WARNING_COUNT
-      ? `Sample size is small for ${selectedWindow} (${totalResolvedCount} resolved outcomes). Treat calibration and threshold results as directional only.`
+    qualifiedResolvedCount < MIN_SAMPLE_WARNING_COUNT
+      ? `Sample size is small for ${selectedWindow} (${qualifiedResolvedCount} quality-qualified resolved outcomes). Treat calibration and threshold results as directional only.`
       : null
 
   const buckets = CONFIDENCE_BUCKETS.map((bucket) =>
@@ -88,23 +98,25 @@ export function buildConfidenceReliabilityDiagnostics(
       bucket.label,
       bucket.minConfidence,
       bucket.maxConfidence,
-      observations,
+      effectiveObservations,
     ),
   )
 
   const thresholds = CONFIDENCE_THRESHOLDS.map((threshold) =>
-    buildThresholdDiagnostics(threshold, observations),
+    buildThresholdDiagnostics(threshold, effectiveObservations),
   )
 
   return {
     selectedWindow,
     totalResolvedCount,
+    qualifiedResolvedCount,
+    excludedLowQualityCount,
     sampleSizeWarning,
     summary: {
-      hitRate: buildHitRate(observations),
-      averagePercentMove: buildAveragePercentMove(observations),
-      bullishHitRate: buildDirectionalHitRate(observations, "bullish"),
-      bearishHitRate: buildDirectionalHitRate(observations, "bearish"),
+      hitRate: buildHitRate(effectiveObservations),
+      averagePercentMove: buildAveragePercentMove(effectiveObservations),
+      bullishHitRate: buildDirectionalHitRate(effectiveObservations, "bullish"),
+      bearishHitRate: buildDirectionalHitRate(effectiveObservations, "bearish"),
     },
     buckets,
     thresholds,
@@ -126,7 +138,12 @@ function flattenResolvedObservations(
       }
 
       observations.push(
-        toObservation(row.confidence, row.bias, outcome),
+        toObservation(
+          row.confidence,
+          row.bias,
+          outcome,
+          row.marketQuality?.signalQualityScore ?? row.confidence,
+        ),
       )
     }
   }
@@ -138,12 +155,14 @@ function toObservation(
   confidence: number,
   bias: BtcDirectionBias,
   outcome: BtcJournalOutcome,
+  signalQualityScore: number,
 ): ConfidenceObservation {
   return {
     confidence,
     bias,
     percentChange: outcome.percentChange,
     directionallyCorrect: outcome.directionallyCorrect ?? false,
+    signalQualityScore,
   }
 }
 

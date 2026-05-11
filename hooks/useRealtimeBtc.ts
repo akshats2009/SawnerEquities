@@ -370,6 +370,7 @@ function recordBiasSnapshot({
       timestampMs: receivedAtMs,
       startingPrice,
       bias: decision.directionBias,
+      marketQuality: decision.marketQuality,
       confidence: decision.confidenceScore,
       observationWindow: decision.observationWindow,
       sourceTickMs,

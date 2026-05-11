@@ -1,4 +1,5 @@
 import type { BtcDecisionExplanation, BtcDirectionBias, BtcObservationWindow } from "@/lib/analysis/priceDecision"
+import type { BtcMarketQualitySnapshot } from "@/lib/analysis/priceDecision"
 import type { MistakeTag } from "@/types"
 
 export type BtcJournalWindow = "1m" | "5m" | "15m" | "1h"
@@ -19,6 +20,7 @@ export interface BtcJournalSnapshot {
   timestampMs: number
   startingPrice: number
   bias: BtcDirectionBias
+  marketQuality?: BtcMarketQualitySnapshot | null
   confidence: number
   observationWindow: BtcObservationWindow
   sourceTickMs: number | null

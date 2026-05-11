@@ -43,9 +43,14 @@ export function ConfidenceReliabilityPanel({
               Checks whether higher confidence has actually mapped to better short-window outcomes.
             </CardDescription>
           </div>
-          <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
-            {diagnostics.totalResolvedCount} resolved outcomes
-          </Badge>
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+              {diagnostics.totalResolvedCount} resolved outcomes
+            </Badge>
+            <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+              {diagnostics.qualifiedResolvedCount} quality-qualified
+            </Badge>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -68,6 +73,12 @@ export function ConfidenceReliabilityPanel({
           <div className="flex gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3 py-3 text-sm text-amber-100">
             <AlertTriangle className="mt-0.5 size-4 shrink-0" />
             <div>{diagnostics.sampleSizeWarning}</div>
+          </div>
+        ) : null}
+
+        {diagnostics.excludedLowQualityCount > 0 ? (
+          <div className="rounded-2xl border border-sky-500/20 bg-sky-500/10 px-3 py-3 text-sm text-sky-100">
+            {diagnostics.excludedLowQualityCount} resolved outcomes were below the signal-quality cutoff and were excluded from calibration.
           </div>
         ) : null}
 

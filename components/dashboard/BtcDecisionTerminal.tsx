@@ -144,7 +144,7 @@ export function BtcDecisionTerminal() {
                 </div>
                 <div className="flex flex-col items-end gap-2 text-right">
                   <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
-                    {decision.directionBias}
+                    {decision.marketQuality.directionalReadout}
                   </Badge>
                   <div className="text-xs uppercase tracking-[0.24em] text-muted-foreground">
                     Confidence
@@ -198,7 +198,7 @@ export function BtcDecisionTerminal() {
               <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                 <DecisionChip
                   label="Direction bias"
-                  value={decision.directionBias}
+                  value={decision.marketQuality.directionalReadout}
                   icon={directionIcon(decision.directionBias)}
                 />
                 <DecisionChip
@@ -417,6 +417,61 @@ export function BtcDecisionTerminal() {
 
             <Card className="border-white/10 bg-[#0c1628]/88">
               <CardHeader className="pb-3">
+                <CardTitle>Market Quality</CardTitle>
+                <CardDescription>
+                  Guardrail for directional clarity and signal noise.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <MiniStat
+                    label="Signal score"
+                    value={`${decision.marketQuality.signalQualityScore}/100`}
+                  />
+                  <MiniStat
+                    label="Noise level"
+                    value={`${decision.marketQuality.noiseLevel}/100`}
+                  />
+                  <MiniStat
+                    label="Directional clarity"
+                    value={decision.marketQuality.directionalClarity}
+                  />
+                  <MiniStat
+                    label="Stability"
+                    value={decision.marketQuality.stabilityAssessment}
+                  />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "border-white/10",
+                      decision.marketQuality.signalQualityState === "strong signal"
+                        ? "bg-emerald-500/10 text-emerald-200"
+                        : decision.marketQuality.signalQualityState === "moderate signal"
+                          ? "bg-sky-500/10 text-sky-200"
+                          : decision.marketQuality.signalQualityState === "weak signal"
+                            ? "bg-amber-500/10 text-amber-200"
+                            : "bg-rose-500/10 text-rose-200",
+                    )}
+                  >
+                    {decision.marketQuality.signalQualityState}
+                  </Badge>
+                  <Badge variant="outline" className="border-white/10 bg-white/[0.03] text-slate-300">
+                    {decision.marketQuality.conflictingSignalCount} conflicts
+                  </Badge>
+                </div>
+                {decision.marketQuality.warning ? (
+                  <div className="flex gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3 py-3 text-sm text-amber-100">
+                    <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                    <div>{decision.marketQuality.warning}</div>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+
+            <Card className="border-white/10 bg-[#0c1628]/88">
+              <CardHeader className="pb-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <CardTitle>Signal Performance</CardTitle>
@@ -495,7 +550,7 @@ export function BtcDecisionTerminal() {
                               {formatWallClock(row.timestampMs)}
                             </td>
                             <td className="px-3 py-2 text-[11px] uppercase tracking-[0.18em] text-foreground">
-                              {row.bias}
+                              {formatDirectionalReadout(row)}
                             </td>
                             <td className="px-3 py-2 font-mono text-[11px] text-foreground">
                               {formatCurrency(row.startingPrice, 0)}
@@ -929,6 +984,14 @@ function calculatePriceMove(ticks: RealtimeBtcTick[]) {
 
 function countResolved(rows: BtcJournalRow[], window: "1m" | "5m" | "15m" | "1h") {
   return rows.filter((row) => row.outcomes[window].resolved).length
+}
+
+function formatDirectionalReadout(row: BtcJournalRow) {
+  const readout =
+    row.marketQuality?.directionalReadout ??
+    (row.bias === "neutral" ? "unclear" : row.bias)
+
+  return readout
 }
 
 function formatSignedCurrency(value: number) {

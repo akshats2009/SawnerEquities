@@ -16,6 +16,24 @@ export type BtcObservationWindow = "1m" | "5m" | "15m" | "1h"
 export type BtcSpreadState = "expanding" | "contracting" | "stable"
 export type BtcVolatilityRegime = "low" | "normal" | "elevated" | "extreme"
 export type BtcChopState = "trending" | "mixed" | "range-bound"
+export type BtcSignalQualityState =
+  | "strong signal"
+  | "moderate signal"
+  | "weak signal"
+  | "noisy / avoid"
+export type BtcDirectionalClarity = "clear" | "muted" | "unclear"
+export type BtcStabilityAssessment = "stable" | "mixed" | "unstable"
+
+export interface BtcMarketQualitySnapshot {
+  signalQualityScore: number
+  signalQualityState: BtcSignalQualityState
+  noiseLevel: number
+  directionalClarity: BtcDirectionalClarity
+  stabilityAssessment: BtcStabilityAssessment
+  conflictingSignalCount: number
+  warning: string | null
+  directionalReadout: string
+}
 
 export interface BtcWindowMetrics {
   window: BtcObservationWindow
@@ -58,6 +76,7 @@ export interface BtcDecisionSnapshot {
   chopState: BtcChopState
   trendPersistenceScore: number
   directionBias: BtcDirectionBias
+  marketQuality: BtcMarketQualitySnapshot
   confidenceScore: number
   volatilityRegime: BtcVolatilityRegime
   riskState: BtcRiskState
@@ -176,11 +195,27 @@ export function analyzeBtcPriceDecision(
     trendPersistenceScore,
     momentumStatus,
   })
+  const marketQuality = assessMarketQuality({
+    stale,
+    riskState,
+    directionBias,
+    momentumStatus,
+    momentumScore,
+    trendPersistenceScore,
+    volatilityRegime,
+    spreadState,
+    spreadBps,
+    oneMinuteReturn,
+    fiveMinuteReturn,
+    suddenMoveDetected,
+    ticks: sortedTicks,
+  })
   const confidenceScore = computeConfidenceScore({
     ticks: sortedTicks,
     stale,
     riskState,
     directionBias,
+    signalQualityScore: marketQuality.signalQualityScore,
     volatilityRegime,
     spreadBps,
     trendPersistenceScore,
@@ -206,12 +241,14 @@ export function analyzeBtcPriceDecision(
     spreadBps,
     volatilityRegime,
     riskState,
+    marketQuality,
   })
 
   const explanation = buildDecisionExplanation({
     directionBias,
     momentumStatus,
     chopState,
+    marketQuality,
     spreadState,
     volatilityRegime,
     trendPersistenceScore,
@@ -222,11 +259,11 @@ export function analyzeBtcPriceDecision(
   })
 
   const notes = buildNotes({
-    directionBias,
     momentumStatus,
     chopState,
     trendPersistenceScore,
     observationWindow,
+    marketQuality,
   })
 
   return {
@@ -251,6 +288,7 @@ export function analyzeBtcPriceDecision(
     chopState,
     trendPersistenceScore,
     directionBias,
+    marketQuality,
     confidenceScore,
     volatilityRegime,
     riskState,
@@ -696,6 +734,7 @@ function computeConfidenceScore({
   stale,
   riskState,
   directionBias,
+  signalQualityScore,
   volatilityRegime,
   spreadBps,
   trendPersistenceScore,
@@ -707,6 +746,7 @@ function computeConfidenceScore({
   stale: boolean
   riskState: BtcRiskState
   directionBias: BtcDirectionBias
+  signalQualityScore: number
   volatilityRegime: BtcVolatilityRegime
   spreadBps: number | null
   trendPersistenceScore: number
@@ -717,6 +757,7 @@ function computeConfidenceScore({
   const sampleQuality = clamp(ticks.length / 25, 0, 1)
   const directionalStrength = clamp(Math.abs(momentumScore) / 100, 0, 1)
   const persistence = trendPersistenceScore / 100
+  const signalQuality = clamp(signalQualityScore / 100, 0, 1)
   const spreadQuality = clamp(1 - (spreadBps ?? 0) / 12, 0, 1)
   const regimePenalty =
     volatilityRegime === "extreme" ? 0.3 : volatilityRegime === "elevated" ? 0.15 : 0
@@ -732,12 +773,13 @@ function computeConfidenceScore({
     sampleQuality * 0.18 +
     directionalStrength * 0.32 +
     persistence * 0.22 +
-    spreadQuality * 0.12 +
+    spreadQuality * 0.1 +
+    signalQuality * 0.14 +
     alignmentBonus -
     regimePenalty -
     riskPenalty -
     stalePenalty +
-    0.16
+    0.14
 
   return Math.round(clamp(raw, 0, 1) * 100)
 }
@@ -795,6 +837,7 @@ function buildAlerts({
   spreadBps,
   volatilityRegime,
   riskState,
+  marketQuality,
 }: {
   stale: boolean
   suddenMoveDetected: boolean
@@ -802,6 +845,7 @@ function buildAlerts({
   spreadBps: number | null
   volatilityRegime: BtcVolatilityRegime
   riskState: BtcRiskState
+  marketQuality: BtcMarketQualitySnapshot
 }) {
   return [
     stale ? "Feed is stale. No fresh tick or heartbeat has arrived within the timeout window." : null,
@@ -814,27 +858,29 @@ function buildAlerts({
     spreadBps !== null && spreadBps >= 8 ? "Bid-ask spread is wide for short-horizon reading." : null,
     volatilityRegime === "extreme" ? "BTC is in an extreme volatility regime." : null,
     riskState === "avoid" ? "Risk state is avoid until the feed and regime normalize." : null,
+    marketQuality.warning,
   ].filter(Boolean) as string[]
 }
 
 function buildNotes({
-  directionBias,
   momentumStatus,
   chopState,
   trendPersistenceScore,
   observationWindow,
+  marketQuality,
 }: {
-  directionBias: BtcDirectionBias
   momentumStatus: BtcMomentumStatus
   chopState: BtcChopState
   trendPersistenceScore: number
   observationWindow: BtcObservationWindow
+  marketQuality: BtcMarketQualitySnapshot
 }) {
   return [
-    `Direction bias leans ${directionBias}.`,
+    `Direction bias reads ${marketQuality.directionalReadout}.`,
     `Momentum reads ${momentumStatus}.`,
     `Market structure currently looks ${chopState}.`,
     `Trend persistence score is ${trendPersistenceScore}.`,
+    `Signal quality is ${marketQuality.signalQualityState} (${marketQuality.signalQualityScore}/100).`,
     `Suggested observation window: ${observationWindow}.`,
   ]
 }
@@ -843,6 +889,7 @@ function buildDecisionExplanation({
   directionBias,
   momentumStatus,
   chopState,
+  marketQuality,
   spreadState,
   volatilityRegime,
   trendPersistenceScore,
@@ -854,6 +901,7 @@ function buildDecisionExplanation({
   directionBias: BtcDirectionBias
   momentumStatus: BtcMomentumStatus
   chopState: BtcChopState
+  marketQuality: BtcMarketQualitySnapshot
   spreadState: BtcSpreadState
   volatilityRegime: BtcVolatilityRegime
   trendPersistenceScore: number
@@ -875,14 +923,26 @@ function buildDecisionExplanation({
     priceAccelerationBpsPerMin2,
     "bps/min^2",
   )
+  const directionalPressure = marketQuality.directionalReadout
+  const weakPressure = marketQuality.signalQualityState === "weak signal"
+  const noisyState = marketQuality.signalQualityState === "noisy / avoid"
 
   if (directionBias === "bullish") {
     return {
-      primaryReason: `1m momentum is strengthening while ${spreadContext}.`,
+      primaryReason: noisyState
+        ? `Directional pressure is unclear while ${spreadContext}.`
+        : weakPressure
+          ? `Weak bullish pressure is building while ${spreadContext}.`
+          : `1m momentum is strengthening while ${spreadContext}.`,
       supportingSignals: [
         `Tick velocity is ${velocityDirection(oneMinuteReturn)} and momentum reads ${momentumStatus}.`,
-        `Trend persistence is ${persistenceLabel}, which supports continuation.`,
-        `5m return remains constructive at ${formatSignedPercent(fiveMinuteReturn)}.`,
+        weakPressure || noisyState
+          ? `Trend persistence is ${persistenceLabel}, but signal quality is ${marketQuality.signalQualityState}.`
+          : `Trend persistence is ${persistenceLabel}, which supports continuation.`,
+        weakPressure || noisyState
+          ? `5m return is ${formatSignedPercent(fiveMinuteReturn)} and the directional readout is ${directionalPressure}.`
+          : `5m return remains constructive at ${formatSignedPercent(fiveMinuteReturn)}.`,
+        `Directional readout is ${directionalPressure}.`,
       ],
       conflictingSignals: [
         volatilityRegime === "elevated" || volatilityRegime === "extreme"
@@ -901,11 +961,20 @@ function buildDecisionExplanation({
 
   if (directionBias === "bearish") {
     return {
-      primaryReason: `1m momentum is weakening while ${spreadContext}.`,
+      primaryReason: noisyState
+        ? `Directional pressure is unclear while ${spreadContext}.`
+        : weakPressure
+          ? `Weak bearish pressure is building while ${spreadContext}.`
+          : `1m momentum is weakening while ${spreadContext}.`,
       supportingSignals: [
         `Tick velocity is ${velocityDirection(oneMinuteReturn)} and momentum reads ${momentumStatus}.`,
-        `Trend persistence is ${persistenceLabel}, which supports continuation to the downside.`,
-        `5m return remains weak at ${formatSignedPercent(fiveMinuteReturn)}.`,
+        weakPressure || noisyState
+          ? `Trend persistence is ${persistenceLabel}, but signal quality is ${marketQuality.signalQualityState}.`
+          : `Trend persistence is ${persistenceLabel}, which supports continuation to the downside.`,
+        weakPressure || noisyState
+          ? `5m return is ${formatSignedPercent(fiveMinuteReturn)} and the directional readout is ${directionalPressure}.`
+          : `5m return remains weak at ${formatSignedPercent(fiveMinuteReturn)}.`,
+        `Directional readout is ${directionalPressure}.`,
       ],
       conflictingSignals: [
         volatilityRegime === "elevated" || volatilityRegime === "extreme"
@@ -923,12 +992,14 @@ function buildDecisionExplanation({
   }
 
   return {
-    primaryReason:
-      "Short-horizon signals are mixed and no persistent directional edge is dominant.",
+    primaryReason: noisyState
+      ? "Conditions are noisy enough that directional pressure is unclear."
+      : "Short-horizon signals are mixed and no persistent directional edge is dominant.",
     supportingSignals: [
       `Momentum is ${momentumStatus}.`,
       `Trend persistence sits at ${persistenceLabel}.`,
       `The structure is currently ${chopState}.`,
+      `Directional readout is ${directionalPressure}.`,
     ],
     conflictingSignals: [
       `The latest move is ${formatSignedPercent(oneMinuteReturn)} on 1m and ${formatSignedPercent(fiveMinuteReturn)} on 5m, so neither side is locked in.`,
@@ -941,6 +1012,309 @@ function buildDecisionExplanation({
     biasChangeCondition:
       "Two aligned windows, stronger acceleration, and cleaner spread behavior would move the bias toward bullish or bearish.",
   }
+}
+
+function assessMarketQuality({
+  stale,
+  riskState,
+  directionBias,
+  momentumStatus,
+  momentumScore,
+  trendPersistenceScore,
+  volatilityRegime,
+  spreadState,
+  spreadBps,
+  oneMinuteReturn,
+  fiveMinuteReturn,
+  suddenMoveDetected,
+  ticks,
+}: {
+  stale: boolean
+  riskState: BtcRiskState
+  directionBias: BtcDirectionBias
+  momentumStatus: BtcMomentumStatus
+  momentumScore: number
+  trendPersistenceScore: number
+  volatilityRegime: BtcVolatilityRegime
+  spreadState: BtcSpreadState
+  spreadBps: number | null
+  oneMinuteReturn: number | null
+  fiveMinuteReturn: number | null
+  suddenMoveDetected: boolean
+  ticks: RealtimeBtcTick[]
+}): BtcMarketQualitySnapshot {
+  const tickConsistencyScore = computeTickConsistencyScore(ticks)
+  const volatilityStabilityScore = computeVolatilityStabilityScore(
+    volatilityRegime,
+    trendPersistenceScore,
+    spreadBps,
+  )
+  const spreadBehaviorScore = computeSpreadBehaviorScore(
+    spreadState,
+    spreadBps,
+  )
+  const momentumAlignmentScore = computeMomentumAlignmentScore({
+    directionBias,
+    momentumStatus,
+    momentumScore,
+    oneMinuteReturn,
+    fiveMinuteReturn,
+  })
+  const conflictingSignalCount = countConflictingSignals({
+    volatilityRegime,
+    spreadState,
+    spreadBps,
+    momentumStatus,
+    trendPersistenceScore,
+    suddenMoveDetected,
+    oneMinuteReturn,
+    fiveMinuteReturn,
+  })
+
+  const qualityScore = clamp(
+    tickConsistencyScore * 0.24 +
+      volatilityStabilityScore * 0.22 +
+      spreadBehaviorScore * 0.2 +
+      momentumAlignmentScore * 0.18 +
+      (trendPersistenceScore / 100) * 0.16 -
+      conflictingSignalCount * 0.06 -
+      (stale ? 0.12 : 0) -
+      (riskState === "avoid" ? 0.18 : riskState === "caution" ? 0.08 : 0),
+    0,
+    1,
+  )
+
+  const signalQualityScore = Math.round(qualityScore * 100)
+  const signalQualityState = classifySignalQualityState(
+    signalQualityScore,
+    riskState,
+    stale,
+  )
+  const noiseLevel = 100 - signalQualityScore
+  const directionalClarity = classifyDirectionalClarity(
+    directionBias,
+    signalQualityState,
+  )
+  const stabilityAssessment = classifyStabilityAssessment(
+    volatilityStabilityScore,
+    spreadBehaviorScore,
+    signalQualityState,
+  )
+
+  return {
+    signalQualityScore,
+    signalQualityState,
+    noiseLevel,
+    directionalClarity,
+    stabilityAssessment,
+    conflictingSignalCount,
+    warning:
+      signalQualityState === "weak signal" ||
+      signalQualityState === "noisy / avoid"
+        ? "Conditions currently unsuitable for high-confidence directional interpretation."
+        : null,
+    directionalReadout: formatDirectionalReadout(directionBias, signalQualityState),
+  }
+}
+
+function computeTickConsistencyScore(ticks: RealtimeBtcTick[]) {
+  const sample = sliceWindowTicks(ticks, 15)
+  if (sample.length < 3) {
+    return 50
+  }
+
+  const directionSigns: number[] = []
+  for (let index = 1; index < sample.length; index += 1) {
+    const previous = sample[index - 1]
+    const current = sample[index]
+    const move = current.price - previous.price
+    if (move !== 0) {
+      directionSigns.push(Math.sign(move))
+    }
+  }
+
+  if (directionSigns.length < 2) {
+    return 55
+  }
+
+  let sameDirectionRuns = 0
+  for (let index = 1; index < directionSigns.length; index += 1) {
+    if (directionSigns[index] === directionSigns[index - 1]) {
+      sameDirectionRuns += 1
+    }
+  }
+
+  const consistency = sameDirectionRuns / Math.max(directionSigns.length - 1, 1)
+  return Math.round(clamp(consistency, 0, 1) * 100)
+}
+
+function computeVolatilityStabilityScore(
+  volatilityRegime: BtcVolatilityRegime,
+  trendPersistenceScore: number,
+  spreadBps: number | null,
+) {
+  const regimeScore =
+    volatilityRegime === "low"
+      ? 1
+      : volatilityRegime === "normal"
+        ? 0.82
+        : volatilityRegime === "elevated"
+          ? 0.52
+          : 0.2
+  const persistenceScore = clamp(trendPersistenceScore / 100, 0, 1)
+  const spreadScore = clamp(1 - (spreadBps ?? 0) / 12, 0, 1)
+  return clamp(regimeScore * 0.55 + persistenceScore * 0.2 + spreadScore * 0.25, 0, 1)
+}
+
+function computeSpreadBehaviorScore(
+  spreadState: BtcSpreadState,
+  spreadBps: number | null,
+) {
+  const stateScore =
+    spreadState === "contracting"
+      ? 1
+      : spreadState === "stable"
+        ? 0.72
+        : 0.32
+  const levelScore = clamp(1 - (spreadBps ?? 0) / 14, 0, 1)
+  return clamp(stateScore * 0.7 + levelScore * 0.3, 0, 1)
+}
+
+function computeMomentumAlignmentScore({
+  directionBias,
+  momentumStatus,
+  momentumScore,
+  oneMinuteReturn,
+  fiveMinuteReturn,
+}: {
+  directionBias: BtcDirectionBias
+  momentumStatus: BtcMomentumStatus
+  momentumScore: number
+  oneMinuteReturn: number | null
+  fiveMinuteReturn: number | null
+}) {
+  const statusScore =
+    momentumStatus === "strong bullish" || momentumStatus === "strong bearish"
+      ? 1
+      : momentumStatus === "bullish" || momentumStatus === "bearish"
+        ? 0.72
+        : 0.4
+  const directionScore =
+    directionBias === "neutral"
+      ? 0.45
+      : Math.sign(oneMinuteReturn ?? 0) === Math.sign(fiveMinuteReturn ?? 0) &&
+          Math.sign(oneMinuteReturn ?? 0) === Math.sign(momentumScore)
+        ? 1
+        : 0.35
+  return clamp(statusScore * 0.5 + directionScore * 0.5, 0, 1)
+}
+
+function countConflictingSignals({
+  volatilityRegime,
+  spreadState,
+  spreadBps,
+  momentumStatus,
+  trendPersistenceScore,
+  suddenMoveDetected,
+  oneMinuteReturn,
+  fiveMinuteReturn,
+}: {
+  volatilityRegime: BtcVolatilityRegime
+  spreadState: BtcSpreadState
+  spreadBps: number | null
+  momentumStatus: BtcMomentumStatus
+  trendPersistenceScore: number
+  suddenMoveDetected: boolean
+  oneMinuteReturn: number | null
+  fiveMinuteReturn: number | null
+}) {
+  return [
+    volatilityRegime === "elevated" || volatilityRegime === "extreme",
+    spreadState === "expanding",
+    spreadBps !== null && spreadBps >= 8,
+    momentumStatus === "flat",
+    trendPersistenceScore < 45,
+    suddenMoveDetected,
+    oneMinuteReturn !== null &&
+      fiveMinuteReturn !== null &&
+      oneMinuteReturn !== 0 &&
+      fiveMinuteReturn !== 0 &&
+      Math.sign(oneMinuteReturn) !== Math.sign(fiveMinuteReturn),
+  ].filter(Boolean).length
+}
+
+function classifySignalQualityState(
+  signalQualityScore: number,
+  riskState: BtcRiskState,
+  stale: boolean,
+): BtcSignalQualityState {
+  if (stale || riskState === "avoid" || signalQualityScore < 35) {
+    return "noisy / avoid"
+  }
+
+  if (signalQualityScore >= 75) {
+    return "strong signal"
+  }
+
+  if (signalQualityScore >= 55) {
+    return "moderate signal"
+  }
+
+  return "weak signal"
+}
+
+function classifyDirectionalClarity(
+  directionBias: BtcDirectionBias,
+  signalQualityState: BtcSignalQualityState,
+): BtcDirectionalClarity {
+  if (directionBias === "neutral" || signalQualityState === "noisy / avoid") {
+    return "unclear"
+  }
+
+  if (signalQualityState === "strong signal") {
+    return "clear"
+  }
+
+  return "muted"
+}
+
+function classifyStabilityAssessment(
+  volatilityStabilityScore: number,
+  spreadBehaviorScore: number,
+  signalQualityState: BtcSignalQualityState,
+): BtcStabilityAssessment {
+  if (signalQualityState === "noisy / avoid") {
+    return "unstable"
+  }
+
+  if (volatilityStabilityScore >= 0.7 && spreadBehaviorScore >= 0.65) {
+    return "stable"
+  }
+
+  if (volatilityStabilityScore >= 0.45 && spreadBehaviorScore >= 0.45) {
+    return "mixed"
+  }
+
+  return "unstable"
+}
+
+function formatDirectionalReadout(
+  directionBias: BtcDirectionBias,
+  signalQualityState: BtcSignalQualityState,
+) {
+  if (signalQualityState === "noisy / avoid" || directionBias === "neutral") {
+    return "unclear"
+  }
+
+  if (signalQualityState === "weak signal") {
+    return `weak ${directionBias} pressure`
+  }
+
+  if (signalQualityState === "moderate signal") {
+    return `${directionBias} pressure`
+  }
+
+  return directionBias
 }
 
 function formatSignedPercent(value: number | null) {
