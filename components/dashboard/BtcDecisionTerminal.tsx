@@ -528,84 +528,117 @@ export function BtcDecisionTerminal() {
             </Card>
 
             <Card className="border-white/10 bg-[#0c1628]/88">
-              <CardHeader className="pb-3">
+              <CardHeader className="pb-2">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <CardTitle>Signal Suppression</CardTitle>
                     <CardDescription>
-                      Stops weak, stale, or contradictory conditions from being shown as confident directional pressure.
+                      Compact guardrail for weak, stale, contradictory, or unstable conditions.
                     </CardDescription>
                   </div>
-                  <Badge
-                    variant="outline"
-                    className={cn(
-                      "border-white/10",
-                      decision.signalSuppression.level === "none"
-                        ? "bg-emerald-500/10 text-emerald-200"
-                        : decision.signalSuppression.level === "caution"
-                          ? "bg-amber-500/10 text-amber-200"
-                          : decision.signalSuppression.level === "suppress directional bias"
-                            ? "bg-rose-500/10 text-rose-200"
-                            : "bg-slate-500/10 text-slate-200",
-                    )}
-                  >
-                    {decision.signalSuppression.level}
-                  </Badge>
                 </div>
               </CardHeader>
               <CardContent className="space-y-3">
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                  <MiniStat label="Display readout" value={decision.signalSuppression.directionalReadout} />
-                  <MiniStat label="Confidence penalty" value={`-${decision.signalSuppression.confidencePenalty}`} />
-                  <MiniStat
-                    label="Snapshot guard"
-                    value={decision.signalSuppression.shouldSuppressSnapshot ? "blocked" : "open"}
-                  />
-                  <MiniStat
-                    label="Override"
-                    value={signalSuppressionOverrideEnabled ? "enabled" : "disabled"}
-                  />
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                  {decision.signalSuppression.reasons.map((reason) => (
+                <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-3">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
                     <Badge
-                      key={reason}
                       variant="outline"
-                      className="border-white/10 bg-white/[0.03] text-slate-300"
+                      className={cn(
+                        "border-white/10",
+                        decision.signalSuppression.level === "none"
+                          ? "bg-emerald-500/10 text-emerald-200"
+                          : decision.signalSuppression.level === "caution"
+                            ? "bg-amber-500/10 text-amber-200"
+                            : decision.signalSuppression.level === "suppress directional bias"
+                              ? "bg-rose-500/10 text-rose-200"
+                              : "bg-slate-500/10 text-slate-200",
+                      )}
                     >
-                      {reason}
+                      {decision.signalSuppression.level}
                     </Badge>
-                  ))}
-                </div>
-
-                {decision.signalSuppression.warning ? (
-                  <div className="flex gap-3 rounded-2xl border border-rose-500/20 bg-rose-500/10 px-3 py-3 text-sm text-rose-100">
-                    <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-                    <div>{decision.signalSuppression.warning}</div>
+                    <span className="font-mono text-xs uppercase tracking-[0.22em] text-slate-200">
+                      {decision.signalSuppression.directionalReadout}
+                    </span>
+                    <span className="text-muted-foreground">
+                      top reason: {decision.signalSuppression.reasons[0] ?? "none"}
+                    </span>
+                    <span className="text-muted-foreground">
+                      impact: -{decision.signalSuppression.confidencePenalty}
+                    </span>
+                    <span className="text-muted-foreground">
+                      override: {signalSuppressionOverrideEnabled ? "on" : "off"}
+                    </span>
+                    <span className="text-muted-foreground">
+                      snapshot guard: {decision.signalSuppression.shouldSuppressSnapshot ? "blocked" : "open"}
+                    </span>
                   </div>
-                ) : (
-                  <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-3 text-sm text-muted-foreground">
-                    No suppression is active. Directional language is allowed by the current market state.
-                  </div>
-                )}
 
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={signalSuppressionOverrideEnabled ? "destructive" : "outline"}
-                    className="border-white/10"
-                    onClick={() =>
-                      setSignalSuppressionOverrideEnabled(!signalSuppressionOverrideEnabled)
-                    }
-                    disabled={!decision.signalSuppression.shouldSuppressSnapshot && !signalSuppressionOverrideEnabled}
-                  >
-                    {signalSuppressionOverrideEnabled ? "Disable suppressed snapshot override" : "Allow suppressed snapshots"}
-                  </Button>
-                  <span className="text-xs text-muted-foreground">
-                    Override is local only and should be used only when you want to record suppressed states for research.
-                  </span>
+                  <details className="mt-3">
+                    <summary className="cursor-pointer list-none text-xs uppercase tracking-[0.22em] text-muted-foreground outline-none transition-colors hover:text-slate-200 focus-visible:text-slate-200 focus-visible:outline-none">
+                      Expand suppression details
+                    </summary>
+                    <div className="mt-3 space-y-3">
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                        <MiniStat label="Display readout" value={decision.signalSuppression.directionalReadout} />
+                        <MiniStat label="Confidence penalty" value={`-${decision.signalSuppression.confidencePenalty}`} />
+                        <MiniStat
+                          label="Snapshot guard"
+                          value={decision.signalSuppression.shouldSuppressSnapshot ? "blocked" : "open"}
+                        />
+                        <MiniStat
+                          label="Override"
+                          value={signalSuppressionOverrideEnabled ? "enabled" : "disabled"}
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        {decision.signalSuppression.reasons.map((reason) => (
+                          <Badge
+                            key={reason}
+                            variant="outline"
+                            className="border-white/10 bg-white/[0.03] text-slate-300"
+                          >
+                            {reason}
+                          </Badge>
+                        ))}
+                      </div>
+
+                      {decision.signalSuppression.warning ? (
+                        <div className="flex gap-3 rounded-2xl border border-rose-500/20 bg-rose-500/10 px-3 py-3 text-sm text-rose-100">
+                          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                          <div>{decision.signalSuppression.warning}</div>
+                        </div>
+                      ) : (
+                        <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-3 text-sm text-muted-foreground">
+                          No suppression is active. Directional language is allowed by the current market state.
+                        </div>
+                      )}
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={signalSuppressionOverrideEnabled ? "destructive" : "outline"}
+                          className="border-white/10"
+                          onClick={() =>
+                            setSignalSuppressionOverrideEnabled(!signalSuppressionOverrideEnabled)
+                          }
+                          disabled={!decision.signalSuppression.shouldSuppressSnapshot && !signalSuppressionOverrideEnabled}
+                        >
+                          {signalSuppressionOverrideEnabled ? "Disable suppressed snapshot override" : "Allow suppressed snapshots"}
+                        </Button>
+                        <span className="text-xs text-muted-foreground">
+                          Override is local only and should be used only when you want to record suppressed states for research.
+                        </span>
+                      </div>
+
+                      {decision.signalSuppression.shouldSuppressSnapshot ? (
+                        <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3 py-3 text-sm text-amber-100">
+                          Suppressed snapshots are blocked unless override is enabled. Enable the override only if you want to preserve this weak or contradictory state for research.
+                        </div>
+                      ) : null}
+                    </div>
+                  </details>
                 </div>
               </CardContent>
             </Card>
