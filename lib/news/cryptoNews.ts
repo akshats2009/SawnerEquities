@@ -65,6 +65,7 @@ export async function fetchCryptoPanicNews(options?: {
     url.searchParams.set("public", "true")
     url.searchParams.set("kind", "news")
     url.searchParams.set("currencies", "BTC")
+    url.searchParams.set("filter", "important")
     url.searchParams.set("limit", String(limit))
 
     const response = await fetch(url, {
@@ -130,6 +131,7 @@ export async function fetchNewsApiItems(options?: {
     url.searchParams.set("language", "en")
     url.searchParams.set("sortBy", "publishedAt")
     url.searchParams.set("pageSize", String(limit))
+    url.searchParams.set("from", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
 
     const response = await fetch(url, {
       headers: {
@@ -238,6 +240,30 @@ function buildNewsQuery(keywords: readonly string[]) {
   return keywords.slice(0, 10).map((keyword) => quoteKeyword(keyword)).join(" OR ")
 }
 
+const NEWSAPI_OUTLET_CREDIBILITY: Record<string, number> = {
+  "reuters": 88,
+  "bloomberg": 85,
+  "associated press": 85,
+  "coindesk": 78,
+  "cointelegraph": 72,
+  "the block": 76,
+  "decrypt": 70,
+  "financial times": 84,
+  "wall street journal": 84,
+  "cnbc": 78,
+  "forbes": 70,
+}
+
+function getNewsApiOutletScore(sourceName: string): number {
+  const nameLower = sourceName.toLowerCase()
+  for (const [outlet, score] of Object.entries(NEWSAPI_OUTLET_CREDIBILITY)) {
+    if (nameLower.includes(outlet)) {
+      return score
+    }
+  }
+  return 66
+}
+
 function calculateNewsCredibility({
   title,
   summary,
@@ -251,13 +277,11 @@ function calculateNewsCredibility({
 }) {
   const sourceLower = source.toLowerCase()
   const base =
-    sourceLower.includes("reuters") || sourceLower.includes("bloomberg") || sourceLower.includes("associated press")
-      ? 88
-      : sourceLower.includes("newsapi")
-        ? 66
-        : sourceLower.includes("cryptopanic")
-          ? 72
-          : 58
+    sourceLower.includes("newsapi")
+      ? 66
+      : sourceLower.includes("cryptopanic")
+        ? 72
+        : getNewsApiOutletScore(source)
   const titleLift = title.length > 50 ? 6 : 0
   const summaryLift = summary.length > 80 ? 6 : 0
   const categoryLift =

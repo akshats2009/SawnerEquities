@@ -154,14 +154,15 @@ function calculateXCredibility({
   matchedKeywords: string[]
   metrics: XPublicMetrics | null
 }) {
-  const base = user?.verified ? 74 : 58
+  const verifiedBonus = user?.verified ? 3 : 0
+  const base = 58 + verifiedBonus
   const followerLift = user?.public_metrics?.followers_count
     ? clampLimit(Math.log10(Math.max(user.public_metrics.followers_count, 1)) * 10 + 12, 0, 20)
     : 0
   const engagementLift =
     metrics?.like_count || metrics?.retweet_count || metrics?.reply_count
       ? clampLimit(
-          Math.log10(
+          Math.log2(
             Math.max(
               (metrics?.like_count ?? 0) +
                 (metrics?.retweet_count ?? 0) +
@@ -170,7 +171,7 @@ function calculateXCredibility({
             ),
           ) * 6,
           0,
-          12,
+          20,
         )
       : 0
   const keywordLift = matchedKeywords.length > 0 ? 8 : 0
