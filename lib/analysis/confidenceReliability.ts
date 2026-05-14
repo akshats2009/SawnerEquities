@@ -17,7 +17,7 @@ export type ConfidenceBucketLabel =
   | "70-85%"
   | "85-100%"
 
-export type ConfidenceReliabilityWindow = "all" | "1m" | "5m" | "15m" | "1h"
+export type ConfidenceReliabilityWindow = "all" | "1m" | "5m" | "15m" | "30m" | "1h"
 
 export interface ConfidenceBucketDiagnostics {
   label: ConfidenceBucketLabel
@@ -116,6 +116,7 @@ const WINDOW_ORDER: Exclude<ConfidenceReliabilityWindow, "all">[] = [
   "1m",
   "5m",
   "15m",
+  "30m",
   "1h",
 ]
 
@@ -228,7 +229,7 @@ function flattenResolvedObservations(
 
   for (const row of signalPerformance) {
     for (const window of windows) {
-      const outcome = row.outcomes[window]
+      const outcome = (row.outcomes as Record<string, BtcJournalOutcome | undefined>)[window]
       if (!outcome || !outcome.resolved || outcome.directionallyCorrect === null) {
         continue
       }
@@ -266,7 +267,10 @@ function flattenForecastObservations(
   const observations: ForecastObservation[] = []
 
   for (const row of signalPerformance) {
-    if (selectedWindow !== "all" && !row.outcomes[selectedWindow].resolved) {
+    const selectedOutcome = selectedWindow === "all"
+      ? undefined
+      : (row.outcomes as Record<string, BtcJournalOutcome | undefined>)[selectedWindow]
+    if (selectedWindow !== "all" && !selectedOutcome?.resolved) {
       continue
     }
 

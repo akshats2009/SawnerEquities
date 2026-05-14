@@ -6,7 +6,7 @@ import {
   RefreshCw,
   Satellite,
 } from "lucide-react"
-import { useMemo, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 
 import { useRealtimeBtc } from "@/hooks/useRealtimeBtc"
 import { Badge } from "@/components/ui/badge"
@@ -636,7 +636,7 @@ export function BtcDecisionTerminal() {
                     </span>
                     <span className="text-white/30">|</span>
                     <span className="rounded border border-white/10 bg-white/[0.03] px-2 py-1">
-                      CONF Δ: -{decision.signalSuppression.confidencePenalty}%
+                      CONF Δ: -{decision.signalSuppression.confidencePenalty}% → {Math.max(0, decision.confidenceScore - decision.signalSuppression.confidencePenalty)}
                     </span>
                     <span className="text-white/30">|</span>
                     <span className="rounded border border-white/10 bg-white/[0.03] px-2 py-1">
@@ -2552,20 +2552,73 @@ function watchMonitorTone(status: string) {
 
 const FORECAST_HORIZONS: BtcForecastHorizon[] = ["15m", "30m", "1h"]
 
+function computeTargetTimestamp(horizonMinutes: number): number {
+  const now = Date.now()
+  const intervalMs = horizonMinutes * 60_000
+  return Math.ceil(now / intervalMs) * intervalMs
+}
+
+function formatMsRemaining(ms: number): string {
+  if (ms <= 0) return "EXPIRED"
+  const totalSeconds = Math.floor(ms / 1000)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}m ${seconds}s left`
+}
+
+function horizonMinutes(horizon: BtcForecastHorizon): number {
+  if (horizon === "15m") return 15
+  if (horizon === "30m") return 30
+  return 60
+}
+
 function ForwardOutlookCard({
   forecast,
 }: {
   forecast: BtcHorizonForecast
 }) {
+  const [msRemaining, setMsRemaining] = useState<number>(() => {
+    const targetTs = computeTargetTimestamp(horizonMinutes(forecast.horizon))
+    return Math.max(0, targetTs - Date.now())
+  })
+  const [marketAt, setMarketAt] = useState<string>("0.50")
+
+  useEffect(() => {
+    function update() {
+      const targetTs = computeTargetTimestamp(horizonMinutes(forecast.horizon))
+      setMsRemaining(Math.max(0, targetTs - Date.now()))
+    }
+    const id = setInterval(update, 1000)
+    return () => clearInterval(id)
+  }, [forecast.horizon])
+
+  const marketAtNum = parseFloat(marketAt)
+  const modelProb = forecast.confidence / 100
+  const edge = isNaN(marketAtNum) ? null : modelProb - marketAtNum
+  const edgeDisplay =
+    edge === null
+      ? "n/a"
+      : `${edge >= 0 ? "+" : ""}${edge.toFixed(2)}`
+  const edgeTone =
+    edge === null ? "text-muted-foreground" : edge >= 0 ? "text-emerald-300" : "text-rose-300"
+
   return (
     <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-3">
       <div className="flex items-center justify-between gap-3">
         <div className="text-xs uppercase tracking-[0.24em] text-muted-foreground">
           {forecast.horizon}
         </div>
-        <Badge variant="outline" className={cn("border-white/10", forecastTone(forecast.directionalOutlook))}>
-          {forecast.directionalOutlook}
-        </Badge>
+        <div className="flex items-center gap-2">
+          <span className={cn(
+            "font-mono text-[11px] uppercase tracking-[0.16em]",
+            msRemaining === 0 ? "text-rose-300" : "text-muted-foreground",
+          )}>
+            {formatMsRemaining(msRemaining)}
+          </span>
+          <Badge variant="outline" className={cn("border-white/10", forecastTone(forecast.directionalOutlook))}>
+            {forecast.directionalOutlook}
+          </Badge>
+        </div>
       </div>
 
       <div className="mt-3 grid gap-2">
@@ -2579,6 +2632,32 @@ function ForwardOutlookCard({
         <MiniStat label="Suppression risk" value={`${forecast.suppressionRisk}%`} />
         <MiniStat label="Forecast quality" value={`${forecast.forecastQuality}/100`} />
         <MiniStat label="Forecast stability" value={`${forecast.forecastStability}/100`} />
+      </div>
+
+      <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 px-3 py-2">
+        <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+          Binary edge / EV
+        </div>
+        <div className="mt-2 flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <label className="text-[11px] text-muted-foreground" htmlFor={`market-at-${forecast.horizon}`}>
+              Market at
+            </label>
+            <input
+              id={`market-at-${forecast.horizon}`}
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              value={marketAt}
+              onChange={(e) => setMarketAt(e.target.value)}
+              className="w-16 rounded border border-white/10 bg-white/[0.03] px-2 py-0.5 font-mono text-xs text-foreground outline-none focus:border-white/20"
+            />
+          </div>
+          <div className={cn("font-mono text-sm font-medium", edgeTone)}>
+            Edge: {edgeDisplay}
+          </div>
+        </div>
       </div>
 
       <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 px-3 py-3 text-sm leading-6 text-foreground">
