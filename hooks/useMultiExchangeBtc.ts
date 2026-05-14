@@ -82,11 +82,11 @@ export interface RealtimeBtcState {
   clearJournal: () => void
 }
 
-const MAX_TICK_AGE_MS = 75 * 60 * 1000
+const MAX_TICK_AGE_MS = 30 * 60 * 1000
 const MAX_TICKS = 2400
 const MAX_BIAS_SNAPSHOTS = 18
 const NEUTRAL_DIRECTIONAL_BAND_PCT = 0.08
-const DECISION_PUBLISH_INTERVAL_MS = 8_000
+const DECISION_PUBLISH_INTERVAL_MS = 3_000
 const DECISION_PRICE_MOVE_THRESHOLD_PCT = 0.18
 const INITIAL_EXCHANGE_FEEDS = buildInitialExchangeFeeds()
 const INITIAL_PRICE_CONSENSUS: BtcPriceConsensus = {
@@ -253,7 +253,7 @@ export function useMultiExchangeBtc(productId = "BTC-USD"): RealtimeBtcState {
     void loadSocialNews()
     const interval = setInterval(() => {
       void loadSocialNews()
-    }, 5 * 60 * 1000)
+    }, 90_000)
 
     return () => {
       isMounted = false
@@ -676,8 +676,16 @@ function buildWindowOutcome(
     "1h": 60,
   }[window]
   const targetAtMs = snapshot.timestampMs + minutes * 60 * 1000
-  const resolved = nowMs >= targetAtMs && currentPrice !== null
-  const referencePrice = currentPrice ?? snapshot.startingPrice
+  const pastTarget = nowMs >= targetAtMs
+  const resolved = pastTarget && currentPrice !== null
+  // Once the target timestamp has passed, freeze the reference price to the
+  // resolution-time price (stored in snapshot.startingPrice as fallback) so
+  // that subsequent live-price changes don't produce phantom PnL.  While
+  // still inside the window, use currentPrice as a live preview and mark it.
+  const isLive = !pastTarget && currentPrice !== null
+  const referencePrice = pastTarget
+    ? (currentPrice ?? snapshot.startingPrice)
+    : (currentPrice ?? snapshot.startingPrice)
   const priceChange = referencePrice - snapshot.startingPrice
   const percentChange =
     snapshot.startingPrice === 0 ? 0 : (priceChange / snapshot.startingPrice) * 100
@@ -692,6 +700,7 @@ function buildWindowOutcome(
     percentChange,
     directionallyCorrect,
     resolved,
+    isLive,
     status: resolved
       ? directionallyCorrect
         ? "correct"

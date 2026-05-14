@@ -19,6 +19,7 @@ export interface BtcJournalOutcome {
   directionallyCorrect: boolean | null
   resolved: boolean
   status: BtcJournalOutcomeStatus
+  isLive: boolean
 }
 
 export interface BtcJournalSnapshot {
