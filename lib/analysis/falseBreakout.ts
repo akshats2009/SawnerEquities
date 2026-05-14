@@ -278,15 +278,15 @@ function detectBreakoutDirection(
       : null
 
   if (
-    (upThreshold15 !== null && currentPrice >= upThreshold15) ||
-    (upThreshold5 !== null && currentPrice >= upThreshold5)
+    upThreshold15 !== null && currentPrice >= upThreshold15 &&
+    upThreshold5 !== null && currentPrice >= upThreshold5
   ) {
     return "up"
   }
 
   if (
-    (downThreshold15 !== null && currentPrice <= downThreshold15) ||
-    (downThreshold5 !== null && currentPrice <= downThreshold5)
+    downThreshold15 !== null && currentPrice <= downThreshold15 &&
+    downThreshold5 !== null && currentPrice <= downThreshold5
   ) {
     return "down"
   }
@@ -348,7 +348,7 @@ function calculateBreakoutConfidence({
   const directionalReturns =
     breakoutDirection === "up"
       ? clamp((((oneMinuteReturn ?? 0) + (fiveMinuteReturn ?? 0) + (fifteenMinuteReturn ?? 0)) / 3 + 0.5) / 1, 0, 1)
-      : clamp((((Math.abs(oneMinuteReturn ?? 0) + Math.abs(fiveMinuteReturn ?? 0) + Math.abs(fifteenMinuteReturn ?? 0)) / 3) + 0.5) / 1, 0, 1)
+      : clamp(((((oneMinuteReturn ?? 0) + (fiveMinuteReturn ?? 0) + (fifteenMinuteReturn ?? 0)) / 3) + 0.5) / 1, 0, 1)
   const velocityScore = clamp(normalizeTickVelocity(tickVelocityPerMin), 0, 1)
   const spreadScore =
     spreadState === "contracting"

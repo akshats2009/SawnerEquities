@@ -116,7 +116,7 @@ function deriveRegimeMetrics(input: BtcRegimeInput) {
   const shortReturn = input.oneMinuteReturn ?? 0
   const midReturn = input.fiveMinuteReturn ?? 0
   const longReturn = input.fifteenMinuteReturn ?? 0
-  const weightedReturn = shortReturn * 0.5 + midReturn * 0.3 + longReturn * 0.2
+  const weightedReturn = shortReturn * 0.25 + midReturn * 0.4 + longReturn * 0.35
   const directionConsistency = computeDirectionalConsistency([
     input.oneMinuteReturn,
     input.fiveMinuteReturn,

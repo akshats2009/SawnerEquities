@@ -131,7 +131,9 @@ export function analyzeBtcSignalSuppression(
     severity += 12
   }
 
-  const level = deriveSuppressionLevel(severity, input.marketRegime, exchangeAgreement)
+  const activeInputCount = Math.max(reasons.length, 1)
+  const normalizedSeverity = severity / Math.sqrt(activeInputCount)
+  const level = deriveSuppressionLevel(normalizedSeverity, input.marketRegime, exchangeAgreement)
   const directionalReadout = deriveDirectionalReadout(
     input.directionBias,
     level,
@@ -259,6 +261,10 @@ function hasContradiction(
   const momentumSign = Math.sign(momentumScore)
 
   if (accelSign === 0 || momentumSign === 0) {
+    return false
+  }
+
+  if (Math.abs(acceleration) < 0.15 || Math.abs(momentumScore) < 0.15) {
     return false
   }
 
