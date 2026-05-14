@@ -285,8 +285,8 @@ export function buildBtcPriceConsensus(
     }
   }
 
-  const prices = active.map((feed) => feed.latestTick!.price).sort((left, right) => left - right)
-  const consolidatedPrice = median(prices)
+  const prices = active.map((feed) => feed.latestTick!.price)
+  const consolidatedPrice = prices.reduce((sum, p) => sum + p, 0) / prices.length
   const bidValues = active
     .map((feed) => feed.latestTick!.bid)
     .filter((value): value is number => value !== null && Number.isFinite(value))
