@@ -87,6 +87,7 @@ export function ConfidenceReliabilityPanel({
             <TabsTrigger value="1m">1m</TabsTrigger>
             <TabsTrigger value="5m">5m</TabsTrigger>
             <TabsTrigger value="15m">15m</TabsTrigger>
+            <TabsTrigger value="30m">30m</TabsTrigger>
             <TabsTrigger value="1h">1h</TabsTrigger>
           </TabsList>
         </Tabs>
@@ -343,7 +344,9 @@ function CalibrationChart({
                           ? "bg-emerald-500/25"
                           : status === "overconfident"
                             ? "bg-rose-500/25"
-                            : "bg-amber-500/25",
+                            : status === "calibrated"
+                              ? "bg-sky-500/25"
+                              : "bg-amber-500/25",
                       )}
                       style={{ height: `${barHeight}px` }}
                     >
@@ -453,14 +456,16 @@ function LegendLine({
 function StatusBadge({
   status,
 }: {
-  status: "underconfident" | "overconfident" | "unreliable"
+  status: "underconfident" | "overconfident" | "unreliable" | "calibrated"
 }) {
   const toneClasses =
     status === "underconfident"
       ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-100"
       : status === "overconfident"
         ? "border-rose-500/20 bg-rose-500/10 text-rose-100"
-        : "border-amber-500/20 bg-amber-500/10 text-amber-100"
+        : status === "calibrated"
+          ? "border-sky-500/20 bg-sky-500/10 text-sky-100"
+          : "border-amber-500/20 bg-amber-500/10 text-amber-100"
 
   return (
     <span className={cn("rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em]", toneClasses)}>
@@ -487,7 +492,7 @@ function bucketReliability(bucket: ConfidenceBucketDiagnostics) {
     return "overconfident"
   }
 
-  return "unreliable"
+  return "calibrated"
 }
 
 function midpointPercentage(minConfidence: number, maxConfidence: number) {
