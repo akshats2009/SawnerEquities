@@ -272,12 +272,37 @@ function classifyEventCategory(
   return "general crypto news"
 }
 
+const NEGATION_WORDS = ["no", "not", "never", "without", "fails to", "unable to"]
+
+function isNegated(words: string[], keywordIndex: number): boolean {
+  const start = Math.max(0, keywordIndex - 2)
+  const context = words.slice(start, keywordIndex)
+  return NEGATION_WORDS.some((neg) => context.some((w) => w === neg || context.join(" ").includes(neg)))
+}
+
+function countMatchesWithNegation(haystack: string, needles: string[]): number {
+  const words = haystack.split(/\s+/)
+  let count = 0
+  for (const needle of needles) {
+    const needleWords = needle.split(/\s+/)
+    for (let i = 0; i <= words.length - needleWords.length; i++) {
+      const slice = words.slice(i, i + needleWords.length).join(" ")
+      if (slice === needle) {
+        if (!isNegated(words, i)) {
+          count++
+        }
+      }
+    }
+  }
+  return count
+}
+
 function classifyEventSentiment(
   text: string,
   category: BtcEventCategory,
 ): BtcEventSentiment {
   const haystack = text.toLowerCase()
-  const bullishHits = countMatches(haystack, [
+  const bullishHits = countMatchesWithNegation(haystack, [
     "bullish",
     "approval",
     "approved",
@@ -293,7 +318,7 @@ function classifyEventSentiment(
     "support",
     "record high",
   ])
-  const bearishHits = countMatches(haystack, [
+  const bearishHits = countMatchesWithNegation(haystack, [
     "bearish",
     "crackdown",
     "lawsuit",
@@ -311,7 +336,7 @@ function classifyEventSentiment(
   ])
 
   if (category === "security/hack" || category === "regulation") {
-    if (bearishHits >= bullishHits) {
+    if (bearishHits >= 2 && bearishHits >= bullishHits) {
       return "bearish"
     }
   }
@@ -583,9 +608,13 @@ function calculateConfidenceImpact({
     topEvents.some((event) => event.sentiment === "bearish")
       ? 10
       : 0
-  const pressurePenalty = Math.min(Math.abs(pressureScore) * 0.35, 24)
+  const absPressure = Math.abs(pressureScore)
+  const pressureAdjustment =
+    absPressure > 60
+      ? -Math.min(absPressure * 0.1, 8)
+      : Math.min(absPressure * 0.35, 24)
   const leadPenalty = lead.marketMovingScore >= 75 ? 12 : lead.marketMovingScore >= 55 ? 8 : 4
-  return Math.round(clamp(leadPenalty + sourcePenalty + contradictionPenalty + pressurePenalty, 0, 100))
+  return Math.round(clamp(leadPenalty + sourcePenalty + contradictionPenalty + pressureAdjustment, 0, 100))
 }
 
 function countEnabledSources(sourceStatus: BtcSocialNewsSourceStatus) {
@@ -600,9 +629,6 @@ function includesAny(haystack: string, needles: string[]) {
   return needles.some((needle) => haystack.includes(needle))
 }
 
-function countMatches(haystack: string, needles: string[]) {
-  return needles.reduce((count, needle) => count + (haystack.includes(needle) ? 1 : 0), 0)
-}
 
 function average(values: number[]) {
   if (values.length === 0) {
