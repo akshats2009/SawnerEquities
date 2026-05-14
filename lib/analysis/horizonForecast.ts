@@ -166,15 +166,15 @@ function buildHorizonForecast(
   context: BtcHorizonForecastContext,
 ): BtcHorizonForecast {
   const config = HORIZON_CONFIG[horizon]
-  const trend = normalizeScore(context.trendPersistenceScore)
-  const momentum = normalizeScore(context.momentumScore)
-  const agreement = normalizeScore(context.marketQuality.exchangeAgreementScore)
+  const trend = normalizeScore(context.trendPersistenceScore) ?? 0
+  const momentum = normalizeScore(context.momentumScore) ?? 0
+  const agreement = normalizeScore(context.marketQuality.exchangeAgreementScore) ?? 0
   const consistency = normalizeDirectionalConsistency(context.rollingReturns, context.directionBias)
   const regimeSignal = computeRegimeSignal(context, horizon)
   const breakoutSignal = computeBreakoutSignal(context, horizon)
   const volatilitySignal = computeVolatilitySignal(context, horizon)
   const suppressionPenalty = computeSuppressionPenalty(context)
-  const noisePenalty = normalizeScore(context.marketQuality.noiseLevel)
+  const noisePenalty = normalizeScore(context.marketQuality.noiseLevel) ?? 0
   const stabilityPenalty = normalizeStabilityPenalty(context)
   const directionBiasSignal = computeScaledDirectionBiasSignal(
     context.directionBias,
@@ -268,16 +268,12 @@ function buildHorizonForecast(
         ? 40
         : 100
 
-  // 30m and 1h require stronger confirmation before reaching high confidence.
-  const horizonCap =
-    horizon === "1h"
-      ? 78
-      : horizon === "30m"
-        ? 86
-        : 100
+  // 30m and 1h apply a soft multiplier to reflect time-horizon uncertainty
+  // without suppressing genuinely high-conviction reads.
+  const horizonMultiplier = horizon === "1h" ? 0.92 : horizon === "30m" ? 0.97 : 1
 
   const confidence = clamp(
-    Math.min(rawConfidence, suppressionCap, regimeCap, marketStateCap, horizonCap),
+    Math.min(rawConfidence, suppressionCap, regimeCap, marketStateCap) * horizonMultiplier,
     0,
     100,
   )
@@ -305,20 +301,7 @@ function buildHorizonForecast(
     0,
     100,
   )
-  const reversalProbability = clamp(
-    35 +
-      Math.max(-directionScore, 0) * 24 +
-      context.falseBreakout.falseBreakoutRisk * 0.3 +
-      context.falseBreakout.exhaustionScore * 0.22 +
-      suppressionPenalty * 0.14 +
-      noisePenalty * 0.12 +
-      volatilitySignal * 0.1 +
-      eventRiskPenalty * 0.14 +
-      eventNoisePenalty * 0.08 +
-      eventAvailabilityPenalty * 0.08,
-    0,
-    100,
-  )
+  const reversalProbability = 100 - breakoutContinuationProbability
   const suppressionRisk = clamp(
     suppressionPenalty * 0.6 +
       noisePenalty * 0.25 +
@@ -384,9 +367,9 @@ function buildHorizonForecast(
   }
 }
 
-function normalizeScore(value: number | null | undefined) {
+function normalizeScore(value: number | null | undefined): number | null {
   if (value === null || value === undefined || Number.isNaN(value)) {
-    return 0.5
+    return null
   }
 
   return clamp(value / 100, 0, 1)
@@ -471,10 +454,10 @@ function computeBreakoutSignal(
   context: BtcHorizonForecastContext,
   horizon: BtcForecastHorizon,
 ) {
-  const health = normalizeScore(context.falseBreakout.breakoutHealthScore)
-  const continuation = normalizeScore(context.falseBreakout.followThroughQuality)
-  const reversalRisk = normalizeScore(context.falseBreakout.falseBreakoutRisk)
-  const exhaustion = normalizeScore(context.falseBreakout.exhaustionScore)
+  const health = normalizeScore(context.falseBreakout.breakoutHealthScore) ?? 0
+  const continuation = normalizeScore(context.falseBreakout.followThroughQuality) ?? 0
+  const reversalRisk = normalizeScore(context.falseBreakout.falseBreakoutRisk) ?? 0
+  const exhaustion = normalizeScore(context.falseBreakout.exhaustionScore) ?? 0
   const breakoutDirection = context.falseBreakout.breakoutDirection
 
   const directionSupport =
@@ -530,7 +513,7 @@ function computeSuppressionPenalty(context: BtcHorizonForecastContext) {
           ? 0.7
           : 1
 
-  const qualityPenalty = 1 - normalizeScore(context.marketQuality.signalQualityScore)
+  const qualityPenalty = 1 - (normalizeScore(context.marketQuality.signalQualityScore) ?? 0)
   const spreadPenalty = computeSpreadDeltaPenalty(context.spreadDeltaPct)
   return clamp(levelPenalty * 0.6 + qualityPenalty * 0.25 + spreadPenalty * 0.15, 0, 1)
 }
