@@ -101,16 +101,12 @@ export function analyzeBtcMarketState(
   )
   const volatilityStabilityScore = Math.round(
     clamp(
-      input.marketQuality.stabilityAssessment === "stable"
-        ? 84
-        : input.marketQuality.stabilityAssessment === "mixed"
-          ? 58
-          : 28,
+      clamp(84 - input.marketQuality.noiseLevel * 0.56, 28, 84) *
+        0.54 +
+        clamp(input.marketRegime.regimeStabilityScore, 0, 100) * 0.46,
       0,
       100,
-    ) *
-      0.54 +
-      clamp(input.marketRegime.regimeStabilityScore, 0, 100) * 0.46,
+    ),
   )
   const trendPersistenceScore = clamp(
     input.marketQuality.tickConsistencyScore * 0.45 +
@@ -225,7 +221,7 @@ function socialNewsInfoBonus(socialNews: BtcSocialNewsSnapshot | null) {
   }
 
   if (socialNews.eventRiskState === "active catalyst") {
-    return 12
+    return 0
   }
 
   if (socialNews.eventRiskState === "elevated") {
